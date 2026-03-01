@@ -20,6 +20,7 @@ import {
 } from "recharts";
 import type { Portfolio } from "../backend.d";
 import { usePortfolioSummary } from "../hooks/useQueries";
+import PriceRefreshBar from "./PriceRefreshBar";
 
 interface DashboardProps {
   portfolioId: bigint | null;
@@ -223,6 +224,12 @@ export default function Dashboard({ portfolioId, portfolio }: DashboardProps) {
       </div>
 
       <div className="px-6 py-6 space-y-6">
+        {/* Price Refresh Bar */}
+        <PriceRefreshBar
+          portfolioId={portfolioId}
+          assets={summary?.assets?.map((ab) => ab.asset) ?? []}
+        />
+
         {/* Summary Cards */}
         <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
           <SummaryCard

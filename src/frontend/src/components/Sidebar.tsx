@@ -30,8 +30,10 @@ import {
   ChevronDown,
   LayoutDashboard,
   LineChart,
+  LogOut,
   Plus,
   Scale,
+  Settings,
   Sliders,
   Trash2,
   TrendingUp,
@@ -39,6 +41,7 @@ import {
 import { useState } from "react";
 import type { ActiveView } from "../App";
 import type { Portfolio } from "../backend.d";
+import { useInternetIdentity } from "../hooks/useInternetIdentity";
 
 interface SidebarProps {
   activeView: ActiveView;
@@ -64,6 +67,12 @@ const navItems: {
   { id: "optimizer", label: "Optimizer", icon: Sliders },
 ];
 
+const bottomNavItems: {
+  id: ActiveView;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+}[] = [{ id: "settings", label: "Settings", icon: Settings }];
+
 export default function Sidebar({
   activeView,
   onNavigate,
@@ -76,6 +85,7 @@ export default function Sidebar({
   isDeleting,
   isLoading,
 }: SidebarProps) {
+  const { clear, identity } = useInternetIdentity();
   const [showCreate, setShowCreate] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
   const [newPortfolioName, setNewPortfolioName] = useState("");
@@ -221,9 +231,59 @@ export default function Sidebar({
           </ul>
         </nav>
 
+        {/* Bottom Nav (Settings, etc.) */}
+        <div className="px-3 pb-1 border-t border-border pt-2">
+          <ul className="space-y-0.5">
+            {bottomNavItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = activeView === item.id;
+              return (
+                <li key={item.id}>
+                  <button
+                    type="button"
+                    onClick={() => onNavigate(item.id)}
+                    className={cn(
+                      "w-full flex items-center gap-2.5 px-2.5 py-2 rounded-md text-sm transition-all duration-150",
+                      isActive
+                        ? "bg-primary/15 text-primary font-medium"
+                        : "text-muted-foreground hover:text-foreground hover:bg-accent",
+                    )}
+                  >
+                    <Icon
+                      className={cn(
+                        "w-4 h-4 shrink-0",
+                        isActive ? "text-primary" : "",
+                      )}
+                    />
+                    {item.label}
+                    {isActive && (
+                      <div className="ml-auto w-1 h-4 rounded-full bg-primary" />
+                    )}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+
         {/* Footer */}
-        <div className="px-5 py-3 border-t border-border">
-          <p className="text-[10px] text-muted-foreground">
+        <div className="px-4 py-3 border-t border-border space-y-2">
+          {identity && (
+            <button
+              type="button"
+              onClick={clear}
+              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all duration-150 group"
+            >
+              <LogOut className="w-3.5 h-3.5 shrink-0 group-hover:text-destructive" />
+              <span className="truncate">
+                {identity.getPrincipal().toString().slice(0, 12)}…
+              </span>
+              <span className="ml-auto opacity-0 group-hover:opacity-100 text-[10px] font-medium transition-opacity">
+                Sign Out
+              </span>
+            </button>
+          )}
+          <p className="text-[10px] text-muted-foreground px-1">
             © {new Date().getFullYear()}.{" "}
             <a
               href={`https://caffeine.ai?utm_source=caffeine-footer&utm_medium=referral&utm_content=${encodeURIComponent(window.location.hostname)}`}

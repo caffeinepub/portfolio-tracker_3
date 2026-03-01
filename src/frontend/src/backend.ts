@@ -152,7 +152,7 @@ export interface backendInterface {
     addAsset(portfolioId: bigint, ticker: string, name: string, assetType: string, quantity: number, avgBuyPrice: number, currentPrice: number, targetAllocationPct: number, marketCap: number | null, peRatio: number | null, sector: string | null, dividendYield: number | null, beta: number | null, notes: string | null): Promise<bigint>;
     assignCallerUserRole(user: Principal, role: UserRole): Promise<void>;
     createPortfolio(name: string): Promise<bigint>;
-    deletePortfolio(portfolioId: bigint): Promise<void>;
+    deletePortfolio(id: bigint): Promise<void>;
     getAssets(portfolioId: bigint): Promise<Array<Asset>>;
     getCallerUserProfile(): Promise<UserProfile | null>;
     getCallerUserRole(): Promise<UserRole>;

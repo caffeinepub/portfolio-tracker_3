@@ -3,12 +3,14 @@ import Array "mo:core/Array";
 import Float "mo:core/Float";
 import Order "mo:core/Order";
 import Nat "mo:core/Nat";
-import Runtime "mo:core/Runtime";
 import Principal "mo:core/Principal";
 import Time "mo:core/Time";
 import Int "mo:core/Int";
-import MixinAuthorization "authorization/MixinAuthorization";
+import Runtime "mo:core/Runtime";
 import AccessControl "authorization/access-control";
+import MixinAuthorization "authorization/MixinAuthorization";
+
+
 
 actor {
   module Portfolio {
@@ -94,45 +96,348 @@ actor {
   let nextPortfolioId = Map.empty<Principal, Nat>();
   let nextAssetId = Map.empty<Principal, Map.Map<Nat, Nat>>();
 
-  public query ({ caller }) func getCallerUserProfile() : async ?UserProfile {
-    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
-      Runtime.trap("Unauthorized: Only users can view profiles");
+  func validateNotAnonymous(caller : Principal) {
+    if (caller.isAnonymous()) {
+      Runtime.trap("Unauthenticated: Anonymous users are not allowed");
     };
+  };
+
+  func verifyPortfolioOwnershipSync(caller : Principal, id : Nat) : Bool {
+    switch (userPortfolios.get(caller)) {
+      case (null) { false };
+      case (?p) { p.containsKey(id) };
+    };
+  };
+
+  func calculatePortfolioSummary(assets : [Asset]) : PortfolioSummary {
+    let totalMarketValue = assets.foldLeft(
+      0.0,
+      func(acc, asset) {
+        acc + (asset.quantity * asset.currentPrice);
+      },
+    );
+    let totalCostBasis = assets.foldLeft(
+      0.0,
+      func(acc, asset) {
+        acc + (asset.quantity * asset.avgBuyPrice);
+      },
+    );
+
+    let assetBreakdowns = assets.map(
+      func(asset) {
+        let value = asset.quantity * asset.currentPrice;
+        let cost = asset.quantity * asset.avgBuyPrice;
+        let gainLoss = value - cost;
+        let gainLossPct = if (cost == 0.0) { 0.0 } else { (gainLoss / cost) * 100.0 };
+        let actualAllocationPct = if (totalMarketValue == 0.0) {
+          0.0;
+        } else { (value / totalMarketValue) * 100.0 };
+        {
+          asset;
+          value;
+          cost;
+          gainLoss;
+          gainLossPct;
+          actualAllocationPct;
+        };
+      }
+    );
+
+    {
+      totalMarketValue;
+      totalCostBasis;
+      totalGainLoss = totalMarketValue - totalCostBasis;
+      totalGainLossPct = if (totalCostBasis == 0.0) { 0.0 } else {
+        let gain = totalMarketValue - totalCostBasis;
+        if (gain <= 0.0) { 0.0 } else {
+          (gain / totalCostBasis) * 100.0;
+        };
+      };
+      assets = assetBreakdowns;
+    };
+  };
+
+  func rebalanceSuggestions(assets : [Asset], totalMarketValue : Float) : [RebalanceSuggestion] {
+    assets.map(
+      func(asset) {
+        let currentValue = asset.quantity * asset.currentPrice;
+        let currentAllocationPct = if (totalMarketValue == 0.0) { 0.0 } else {
+          (currentValue / totalMarketValue) * 100.0;
+        };
+        let allocationDiffPct = asset.targetAllocationPct - currentAllocationPct;
+        let suggestedAmount = totalMarketValue * (allocationDiffPct / 100.0);
+
+        {
+          asset;
+          currentValue;
+          currentAllocationPct;
+          targetAllocationPct = asset.targetAllocationPct;
+          allocationDiffPct;
+          suggestedAmount;
+        };
+      }
+    );
+  };
+
+  func calculateProfileRebalanceSuggestions(
+    assets : [Asset],
+    marketCondition : Text,
+    riskProfile : Text,
+  ) : [ProfileRebalanceSuggestion] {
+    if (marketCondition != "bull" and marketCondition != "bear") {
+      Runtime.trap("Invalid market condition - must be 'bull' or 'bear'");
+    };
+
+    if (riskProfile != "aggressive" and riskProfile != "balanced" and riskProfile != "conservative") {
+      Runtime.trap("Invalid risk profile - must be 'aggressive', 'balanced', or 'conservative'");
+    };
+
+    assets.map(
+      func(asset) {
+        let beta = switch (asset.beta) {
+          case (null) { 1.0 };
+          case (?b) { b };
+        };
+        let assetType = asset.assetType;
+        let sector = switch (asset.sector) {
+          case (null) { "" };
+          case (?s) { s };
+        };
+
+        let suggestedTargetPct = switch (riskProfile, marketCondition) {
+          case ("aggressive", "bull") {
+            if (assetType == "crypto") { asset.targetAllocationPct * 1.25 } else if (switch (asset.beta) { case (?b) { b > 1.2 }; case (null) { false } }) {
+              asset.targetAllocationPct * 1.15;
+            } else { asset.targetAllocationPct };
+          };
+          case ("aggressive", "bear") {
+            if (assetType == "crypto") { asset.targetAllocationPct * 0.6 } else if (switch (asset.beta) { case (?b) { b > 1.2 }; case (null) { false } }) {
+              asset.targetAllocationPct * 0.8;
+            } else { asset.targetAllocationPct };
+          };
+          case ("balanced", "bull") {
+            if (assetType == "crypto") { asset.targetAllocationPct * 1.1 } else if (switch (asset.beta) { case (?b) { b > 1.2 }; case (null) { false } }) {
+              asset.targetAllocationPct * 1.05;
+            } else { asset.targetAllocationPct };
+          };
+          case ("balanced", "bear") {
+            if (assetType == "crypto") {
+              asset.targetAllocationPct * 0.8;
+            } else if (sector == "technology" or sector == "crypto") {
+              asset.targetAllocationPct * 0.9;
+            } else {
+              asset.targetAllocationPct;
+            };
+          };
+          case ("conservative", "bull") {
+            if (assetType == "crypto") {
+              asset.targetAllocationPct * 0.85;
+            } else if (sector == "technology" or sector == "crypto") {
+              asset.targetAllocationPct * 0.9;
+            } else if (
+              switch (asset.dividendYield) {
+                case (null) { false };
+                case (?d) { d > 0.02 };
+              }
+            ) {
+              asset.targetAllocationPct * 1.1;
+            } else { asset.targetAllocationPct };
+          };
+          case ("conservative", "bear") {
+            if (assetType == "crypto") {
+              asset.targetAllocationPct * 0.25;
+            } else if (sector == "technology" or sector == "crypto") {
+              asset.targetAllocationPct * 0.5;
+            } else if (
+              switch (asset.dividendYield) {
+                case (null) { false };
+                case (?d) { d > 0.02 };
+              }
+            ) {
+              asset.targetAllocationPct * 1.1;
+            } else { asset.targetAllocationPct };
+          };
+          case (_) { asset.targetAllocationPct };
+        };
+
+        let rationale = switch (riskProfile, marketCondition) {
+          case ("aggressive", "bull") {
+            if (assetType == "crypto") {
+              "Higher allocation to risky assets";
+            } else if (switch (asset.beta) { case (?b) { b > 1.2 }; case (null) { false } }) {
+              "Research shows high beta assets outperform in bull markets";
+            } else { "Neutral" };
+          };
+          case ("aggressive", "bear") {
+            if (assetType == "crypto") {
+              "Reduced crypto allocation due to risk";
+            } else if (switch (asset.beta) { case (?b) { b > 1.2 }; case (null) { false } }) {
+              "Research shows high beta assets underperform in bear markets";
+            } else { "Neutral" };
+          };
+          case ("balanced", "bull") {
+            if (assetType == "crypto") {
+              "Moderate tilt towards risk assets in bull market";
+            } else if (switch (asset.beta) { case (?b) { b > 1.2 }; case (null) { false } }) {
+              "Slight tilt towards high beta assets in bull market";
+            } else { "Neutral" };
+          };
+          case ("balanced", "bear") {
+            if (assetType == "crypto") {
+              "Reduced risk assets in bear market";
+            } else if (sector == "technology" or sector == "crypto") {
+              "Reduced risk assets in bear market";
+            } else { "Neutral" };
+          };
+          case ("conservative", "bull") {
+            if (assetType == "crypto") {
+              "Minimal high risk allocation for growth";
+            } else if (sector == "technology" or sector == "crypto") {
+              "Minimal high risk allocation for growth";
+            } else if (
+              switch (asset.dividendYield) {
+                case (null) { false };
+                case (?d) { d > 0.02 };
+              }
+            ) {
+              "Research shows high dividend stocks outperform over time";
+            } else { "Neutral" };
+          };
+          case ("conservative", "bear") {
+            if (assetType == "crypto") {
+              "Near-zero allocation to defensive assets";
+            } else if (sector == "technology" or sector == "crypto") {
+              "Near-zero allocation to defensive assets";
+            } else if (
+              switch (asset.dividendYield) {
+                case (null) { false };
+                case (?d) { d > 0.02 };
+              }
+            ) {
+              "Research shows high dividend stocks outperform over time";
+            } else {
+              "Stable original weight";
+            };
+          };
+          case (_) { "Stable original weight" };
+        };
+
+        {
+          asset;
+          suggestedTargetPct;
+          rationale;
+        };
+      }
+    );
+  };
+
+  func emptyPortfolioSummary() : PortfolioSummary {
+    {
+      totalMarketValue = 0.0;
+      totalCostBasis = 0.0;
+      totalGainLoss = 0.0;
+      totalGainLossPct = 0.0;
+      assets = [];
+    };
+  };
+
+  // Query functions - ONLY return caller's own data (or requested user's public data)
+
+  public query ({ caller }) func getCallerUserProfile() : async ?UserProfile {
     userProfiles.get(caller);
   };
 
   public query ({ caller }) func getUserProfile(user : Principal) : async ?UserProfile {
-    if (caller != user and not AccessControl.isAdmin(accessControlState, caller)) {
-      Runtime.trap("Unauthorized: Can only view your own profile");
-    };
+    // Return the requested user's profile (profiles are public, no admin check needed)
     userProfiles.get(user);
   };
 
-  public shared ({ caller }) func saveCallerUserProfile(profile : UserProfile) : async () {
-    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
-      Runtime.trap("Unauthorized: Only users can save profiles");
+  public query ({ caller }) func getPortfolios() : async [Portfolio] {
+    switch (userPortfolios.get(caller)) {
+      case (null) { [] };
+      case (?portfolios) { portfolios.values().toArray().sort() };
     };
+  };
+
+  public query ({ caller }) func getAssets(portfolioId : Nat) : async [Asset] {
+    // Only return assets for caller's own portfolio
+    switch (userAssets.get(caller)) {
+      case (null) { [] };
+      case (?assets) {
+        switch (assets.get(portfolioId)) {
+          case (null) { [] };
+          case (?assets) {
+            assets.values().toArray().sort();
+          };
+        };
+      };
+    };
+  };
+
+  public query ({ caller }) func getPortfolioSummary(portfolioId : Nat) : async PortfolioSummary {
+    switch (userAssets.get(caller)) {
+      case (null) { return emptyPortfolioSummary() };
+      case (?assets) {
+        switch (assets.get(portfolioId)) {
+          case (null) { return emptyPortfolioSummary() };
+          case (?assets) { calculatePortfolioSummary(assets.values().toArray().sort()) };
+        };
+      };
+    };
+  };
+
+  public query ({ caller }) func getRebalanceSuggestions(portfolioId : Nat) : async [RebalanceSuggestion] {
+    switch (userAssets.get(caller)) {
+      case (null) { [] };
+      case (?assets) {
+        switch (assets.get(portfolioId)) {
+          case (null) { [] };
+          case (?assets) {
+            rebalanceSuggestions(
+              assets.values().toArray().sort(),
+              assets.values().toArray().sort().foldLeft(0.0, func(acc, asset) { acc + (asset.quantity * asset.currentPrice) }),
+            );
+          };
+        };
+      };
+    };
+  };
+
+  public query ({ caller }) func getProfileRebalanceSuggestions(
+    portfolioId : Nat,
+    marketCondition : Text,
+    riskProfile : Text,
+  ) : async [ProfileRebalanceSuggestion] {
+    switch (userAssets.get(caller)) {
+      case (null) { [] };
+      case (?assets) {
+        switch (assets.get(portfolioId)) {
+          case (null) { [] };
+          case (?assets) {
+            calculateProfileRebalanceSuggestions(
+              assets.values().toArray().sort(),
+              marketCondition,
+              riskProfile,
+            );
+          };
+        };
+      };
+    };
+  };
+
+  // Shared functions - can mutate state
+
+  public shared ({ caller }) func saveCallerUserProfile(profile : UserProfile) : async () {
+    validateNotAnonymous(caller);
     userProfiles.add(caller, profile);
   };
 
-  func verifyPortfolioOwnership(caller : Principal, portfolioId : Nat) {
-    let portfolios = switch (userPortfolios.get(caller)) {
-      case (null) { Runtime.trap("Portfolio not found") };
-      case (?p) { p };
-    };
-    if (not portfolios.containsKey(portfolioId)) {
-      Runtime.trap("Portfolio not found");
-    };
-  };
-
   public shared ({ caller }) func initialize() : async () {
-    if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
-      Runtime.trap("Unauthorized: Only users can initialize");
-    };
+    validateNotAnonymous(caller);
 
     switch (userPortfolios.get(caller)) {
       case (?portfolios) {
-        if (not portfolios.isEmpty()) { Runtime.trap("Already initialized - portfolio(s) exist for this user!") };
+        if (not portfolios.isEmpty()) { return };
       };
       case (null) {};
     };
@@ -298,9 +603,7 @@ actor {
   };
 
   public shared ({ caller }) func createPortfolio(name : Text) : async Nat {
-    if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
-      Runtime.trap("Unauthorized: Only users can create portfolios");
-    };
+    validateNotAnonymous(caller);
 
     let portfolioId = switch (nextPortfolioId.get(caller)) {
       case (null) { 1 };
@@ -323,35 +626,28 @@ actor {
     portfolioId;
   };
 
-  public shared ({ caller }) func deletePortfolio(portfolioId : Nat) : async () {
-    if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
-      Runtime.trap("Unauthorized: Only users can delete portfolios");
+  public shared ({ caller }) func deletePortfolio(id : Nat) : async () {
+    validateNotAnonymous(caller);
+
+    if (not verifyPortfolioOwnershipSync(caller, id)) {
+      Runtime.trap("Portfolio not found");
     };
 
-    verifyPortfolioOwnership(caller, portfolioId);
-
-    let portfolios = switch (userPortfolios.get(caller)) {
-      case (null) { Runtime.trap("No portfolios found for user") };
-      case (?p) { p };
-    };
-    portfolios.remove(portfolioId);
-    switch (userAssets.get(caller)) {
-      case (null) {};
-      case (?assets) { assets.remove(portfolioId) };
-    };
-    switch (nextAssetId.get(caller)) {
-      case (null) {};
-      case (?ids) { ids.remove(portfolioId) };
-    };
-  };
-
-  public query ({ caller }) func getPortfolios() : async [Portfolio] {
-    if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
-      Runtime.trap("Unauthorized: Only users can get portfolios");
-    };
     switch (userPortfolios.get(caller)) {
-      case (null) { [] };
-      case (?portfolios) { portfolios.values().toArray().sort() };
+      case (null) {
+        Runtime.trap("No portfolios found for user");
+      };
+      case (?portfolios) {
+        portfolios.remove(id);
+        switch (userAssets.get(caller)) {
+          case (null) {};
+          case (?assets) { assets.remove(id) };
+        };
+        switch (nextAssetId.get(caller)) {
+          case (null) {};
+          case (?ids) { ids.remove(id) };
+        };
+      };
     };
   };
 
@@ -371,11 +667,11 @@ actor {
     beta : ?Float,
     notes : ?Text,
   ) : async Nat {
-    if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
-      Runtime.trap("Unauthorized: Only users can add assets");
-    };
+    validateNotAnonymous(caller);
 
-    verifyPortfolioOwnership(caller, portfolioId);
+    if (not verifyPortfolioOwnershipSync(caller, portfolioId)) {
+      Runtime.trap("Portfolio not found");
+    };
 
     let assetId = switch (nextAssetId.get(caller)) {
       case (null) {
@@ -424,11 +720,11 @@ actor {
   };
 
   public shared ({ caller }) func updateAsset(asset : Asset) : async () {
-    if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
-      Runtime.trap("Unauthorized: Only users can update assets");
-    };
+    validateNotAnonymous(caller);
 
-    verifyPortfolioOwnership(caller, asset.portfolioId);
+    if (not verifyPortfolioOwnershipSync(caller, asset.portfolioId)) {
+      Runtime.trap("Portfolio not found");
+    };
 
     let portfoliosAssets = switch (userAssets.get(caller)) {
       case (null) { Runtime.trap("No assets found for user") };
@@ -443,11 +739,11 @@ actor {
   };
 
   public shared ({ caller }) func removeAsset(portfolioId : Nat, assetId : Nat) : async () {
-    if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
-      Runtime.trap("Unauthorized: Only users can remove assets");
-    };
+    validateNotAnonymous(caller);
 
-    verifyPortfolioOwnership(caller, portfolioId);
+    if (not verifyPortfolioOwnershipSync(caller, portfolioId)) {
+      Runtime.trap("Portfolio not found");
+    };
 
     let portfoliosAssets = switch (userAssets.get(caller)) {
       case (null) { Runtime.trap("No assets found for user") };
@@ -459,271 +755,5 @@ actor {
     };
     if (not assets.containsKey(assetId)) { Runtime.trap("Asset not found") };
     assets.remove(assetId);
-  };
-
-  public query ({ caller }) func getAssets(portfolioId : Nat) : async [Asset] {
-    if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
-      Runtime.trap("Unauthorized: Only users can get assets");
-    };
-
-    verifyPortfolioOwnership(caller, portfolioId);
-
-    switch (userAssets.get(caller)) {
-      case (null) { [] };
-      case (?portfoliosAssets) {
-        switch (portfoliosAssets.get(portfolioId)) {
-          case (null) { [] };
-          case (?assets) {
-            assets.values().toArray().sort();
-          };
-        };
-      };
-    };
-  };
-
-  public query ({ caller }) func getPortfolioSummary(portfolioId : Nat) : async PortfolioSummary {
-    if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
-      Runtime.trap("Unauthorized: Only users can get portfolio summary");
-    };
-
-    verifyPortfolioOwnership(caller, portfolioId);
-
-    switch (userAssets.get(caller)) {
-      case (null) {
-        return emptyPortfolioSummary();
-      };
-      case (?portfoliosAssets) {
-        switch (portfoliosAssets.get(portfolioId)) {
-          case (null) {
-            return emptyPortfolioSummary();
-          };
-          case (?assets) {
-            let assetsArray = assets.values().toArray().sort();
-
-            let totalMarketValue = assetsArray.foldLeft(0.0, func(acc, asset) { acc + (asset.quantity * asset.currentPrice) });
-            let totalCostBasis = assetsArray.foldLeft(0.0, func(acc, asset) { acc + (asset.quantity * asset.avgBuyPrice) });
-
-            let assetBreakdowns = assetsArray.map(
-              func(asset) {
-                let value = asset.quantity * asset.currentPrice;
-                let cost = asset.quantity * asset.avgBuyPrice;
-                let gainLoss = value - cost;
-                let gainLossPct = if (cost == 0.0) { 0.0 } else { (gainLoss / cost) * 100.0 };
-                let actualAllocationPct = if (totalMarketValue == 0.0) { 0.0 } else { (value / totalMarketValue) * 100.0 };
-                {
-                  asset;
-                  value;
-                  cost;
-                  gainLoss;
-                  gainLossPct;
-                  actualAllocationPct;
-                };
-              }
-            );
-
-            return {
-              totalMarketValue;
-              totalCostBasis;
-              totalGainLoss = totalMarketValue - totalCostBasis;
-              totalGainLossPct = if (totalCostBasis == 0.0) { 0.0 } else { ((totalMarketValue - totalCostBasis) / totalCostBasis) * 100.0 };
-              assets = assetBreakdowns;
-            };
-          };
-        };
-      };
-    };
-  };
-
-  public query ({ caller }) func getRebalanceSuggestions(portfolioId : Nat) : async [RebalanceSuggestion] {
-    if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
-      Runtime.trap("Unauthorized: Only users can get rebalance suggestions");
-    };
-
-    verifyPortfolioOwnership(caller, portfolioId);
-
-    switch (userAssets.get(caller)) {
-      case (null) { [] };
-      case (?portfoliosAssets) {
-        switch (portfoliosAssets.get(portfolioId)) {
-          case (null) { [] };
-          case (?assets) {
-            let assetsArray = assets.values().toArray().sort();
-            let totalMarketValue = assetsArray.foldLeft(0.0, func(acc, asset) { acc + (asset.quantity * asset.currentPrice) });
-
-            return assetsArray.map(
-              func(asset) {
-                let currentValue = asset.quantity * asset.currentPrice;
-                let currentAllocationPct = if (totalMarketValue == 0.0) { 0.0 } else { (currentValue / totalMarketValue) * 100.0 };
-                let allocationDiffPct = asset.targetAllocationPct - currentAllocationPct;
-                let suggestedAmount = totalMarketValue * (allocationDiffPct / 100.0);
-
-                {
-                  asset;
-                  currentValue;
-                  currentAllocationPct;
-                  targetAllocationPct = asset.targetAllocationPct;
-                  allocationDiffPct;
-                  suggestedAmount;
-                };
-              }
-            );
-          };
-        };
-      };
-    };
-  };
-
-  public query ({ caller }) func getProfileRebalanceSuggestions(
-    portfolioId : Nat,
-    marketCondition : Text,
-    riskProfile : Text,
-  ) : async [ProfileRebalanceSuggestion] {
-    if (not AccessControl.hasPermission(accessControlState, caller, #user)) {
-      Runtime.trap("Unauthorized: Only users can get profile rebalance suggestions");
-    };
-
-    verifyPortfolioOwnership(caller, portfolioId);
-
-    switch (userAssets.get(caller)) {
-      case (null) { [] };
-      case (?portfoliosAssets) {
-        switch (portfoliosAssets.get(portfolioId)) {
-          case (null) { [] };
-          case (?assets) {
-            let assetsArray = assets.values().toArray().sort();
-            let totalMarketValue = assetsArray.foldLeft(0.0, func(acc, asset) { acc + (asset.quantity * asset.currentPrice) });
-
-            if (marketCondition != "bull" and marketCondition != "bear") {
-              Runtime.trap("Invalid market condition - must be 'bull' or 'bear'");
-            };
-
-            if (
-              riskProfile != "aggressive" and riskProfile != "balanced" and riskProfile != "conservative"
-            ) {
-              Runtime.trap("Invalid risk profile - must be 'aggressive', 'balanced', or 'conservative'");
-            };
-
-            return assetsArray.map(
-              func(asset) {
-                let beta = switch (asset.beta) { case (?b) { b }; case (null) { 1.0 } };
-                let assetType = asset.assetType;
-                let sector = switch (asset.sector) {
-                  case (?s) { s };
-                  case (null) { "" };
-                };
-
-                let suggestedTargetPct = switch (riskProfile, marketCondition) {
-                  case ("aggressive", "bull") {
-                    if (assetType == "crypto") { asset.targetAllocationPct * 1.25 } else if (switch (asset.beta) { case (?b) { b > 1.2 }; case (null) { false } }) {
-                      asset.targetAllocationPct * 1.15;
-                    } else { asset.targetAllocationPct };
-                  };
-                  case ("aggressive", "bear") {
-                    if (assetType == "crypto") { asset.targetAllocationPct * 0.6 } else if (switch (asset.beta) { case (?b) { b > 1.2 }; case (null) { false } }) {
-                      asset.targetAllocationPct * 0.8;
-                    } else { asset.targetAllocationPct };
-                  };
-                  case ("balanced", "bull") {
-                    if (assetType == "crypto") { asset.targetAllocationPct * 1.1 } else if (switch (asset.beta) { case (?b) { b > 1.2 }; case (null) { false } }) {
-                      asset.targetAllocationPct * 1.05;
-                    } else { asset.targetAllocationPct };
-                  };
-                  case ("balanced", "bear") {
-                    if (assetType == "crypto") { asset.targetAllocationPct * 0.8 } else if (sector == "technology" or sector == "crypto") { asset.targetAllocationPct * 0.9 } else {
-                      asset.targetAllocationPct;
-                    };
-                  };
-                  case ("conservative", "bull") {
-                    if (assetType == "crypto") {
-                      asset.targetAllocationPct * 0.85;
-                    } else if (sector == "technology" or sector == "crypto") { asset.targetAllocationPct * 0.9 } else if (
-                      switch (asset.dividendYield) {
-                        case (?d) { d > 0.02 };
-                        case (null) { false };
-                      }
-                    ) {
-                      asset.targetAllocationPct * 1.1;
-                    } else { asset.targetAllocationPct };
-                  };
-                  case ("conservative", "bear") {
-                    if (assetType == "crypto") {
-                      asset.targetAllocationPct * 0.25;
-                    } else if (sector == "technology" or sector == "crypto") { asset.targetAllocationPct * 0.5 } else if (
-                      switch (asset.dividendYield) {
-                        case (?d) { d > 0.02 };
-                        case (null) { false };
-                      }
-                    ) {
-                      asset.targetAllocationPct * 1.1;
-                    } else { asset.targetAllocationPct };
-                  };
-                  case (_) { asset.targetAllocationPct };
-                };
-
-                let rationale = switch (riskProfile, marketCondition) {
-                  case ("aggressive", "bull") {
-                    if (assetType == "crypto") { "Higher allocation to risky assets" } else if (beta > 1.2) {
-                      "Research shows high beta assets outperform in bull markets";
-                    } else { "Neutral" };
-                  };
-                  case ("aggressive", "bear") {
-                    if (assetType == "crypto") { "Reduced crypto allocation due to risk" } else if (beta > 1.2) {
-                      "Research shows high beta assets underperform in bear markets";
-                    } else { "Neutral" };
-                  };
-                  case ("balanced", "bull") {
-                    if (assetType == "crypto") { "Moderate tilt towards risk assets in bull market" } else if (beta > 1.2) {
-                      "Slight tilt towards high beta assets in bull market";
-                    } else { "Neutral" };
-                  };
-                  case ("balanced", "bear") {
-                    if (assetType == "crypto") { "Reduced risk assets in bear market" } else if (sector == "technology" or sector == "crypto") {
-                      "Reduced risk assets in bear market";
-                    } else { "Neutral" };
-                  };
-                  case ("conservative", "bull") {
-                    if (assetType == "crypto") { "Minimal high risk allocation for growth" } else if (sector == "technology" or sector == "crypto") {
-                      "Minimal high risk allocation for growth";
-                    } else if (switch (asset.dividendYield) {
-                      case (?d) { d > 0.02 };
-                      case (null) { false };
-                    }) { "Research shows high dividend stocks outperform over time" } else {
-                      "Neutral";
-                    };
-                  };
-                  case ("conservative", "bear") {
-                    if (assetType == "crypto") { "Near-zero allocation to defensive assets" } else if (sector == "technology" or sector == "crypto") {
-                      "Near-zero allocation to defensive assets";
-                    } else if (switch (asset.dividendYield) {
-                      case (?d) { d > 0.02 };
-                      case (null) { false };
-                    }) { "Research shows high dividend stocks outperform over time" } else {
-                      "Stable original weight";
-                    };
-                  };
-                  case (_) { "Stable original weight" };
-                };
-
-                {
-                  asset;
-                  suggestedTargetPct;
-                  rationale;
-                };
-              }
-            );
-          };
-        };
-      };
-    };
-  };
-
-  func emptyPortfolioSummary() : PortfolioSummary {
-    {
-      totalMarketValue = 0.0;
-      totalCostBasis = 0.0;
-      totalGainLoss = 0.0;
-      totalGainLossPct = 0.0;
-      assets = [];
-    };
   };
 };

@@ -48,6 +48,7 @@ import {
   useRemoveAsset,
   useUpdateAsset,
 } from "../hooks/useQueries";
+import PriceRefreshBar from "./PriceRefreshBar";
 
 interface HoldingsProps {
   portfolioId: bigint | null;
@@ -748,6 +749,11 @@ export default function Holdings({ portfolioId, portfolio }: HoldingsProps) {
             Add Asset
           </Button>
         </div>
+      </div>
+
+      {/* Price Refresh Bar */}
+      <div className="px-6 pt-3 pb-1">
+        <PriceRefreshBar portfolioId={portfolioId} assets={assets} />
       </div>
 
       {/* Table */}
