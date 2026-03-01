@@ -42,6 +42,7 @@ import {
 import { useState } from "react";
 import { toast } from "sonner";
 import type { Asset, Portfolio } from "../backend.d";
+import { useCurrency } from "../hooks/useCurrency";
 import {
   useAddAsset,
   useAssets,
@@ -62,20 +63,14 @@ function fmt(val: number, decimals = 2) {
   });
 }
 
-function fmtCurrency(val: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(val);
-}
-
-function fmtMarketCap(val: number): string {
+function fmtMarketCap(
+  val: number,
+  fmtCurrencyFn: (v: number) => string,
+): string {
   if (val >= 1e12) return `$${(val / 1e12).toFixed(2)}T`;
   if (val >= 1e9) return `$${(val / 1e9).toFixed(2)}B`;
   if (val >= 1e6) return `$${(val / 1e6).toFixed(2)}M`;
-  return fmtCurrency(val);
+  return fmtCurrencyFn(val);
 }
 
 interface AssetFormData {
@@ -518,7 +513,13 @@ function AssetFormDialog({
   );
 }
 
-function AnalyticsPanel({ asset }: { asset: Asset }) {
+function AnalyticsPanel({
+  asset,
+  fmtCurrency,
+}: {
+  asset: Asset;
+  fmtCurrency: (val: number) => string;
+}) {
   const hasAny =
     asset.marketCap !== undefined ||
     asset.peRatio !== undefined ||
@@ -537,7 +538,7 @@ function AnalyticsPanel({ asset }: { asset: Asset }) {
             <div className="flex items-center gap-1.5">
               <span className="text-muted-foreground">Mkt Cap</span>
               <span className="font-mono font-medium text-foreground">
-                {fmtMarketCap(asset.marketCap)}
+                {fmtMarketCap(asset.marketCap, fmtCurrency)}
               </span>
             </div>
           )}
@@ -594,6 +595,7 @@ function AnalyticsPanel({ asset }: { asset: Asset }) {
 }
 
 export default function Holdings({ portfolioId, portfolio }: HoldingsProps) {
+  const { fmtCurrency } = useCurrency();
   const assetsQuery = useAssets(portfolioId);
   const assets = assetsQuery.data ?? [];
   const loading = assetsQuery.isLoading;
@@ -957,7 +959,10 @@ export default function Holdings({ portfolioId, portfolio }: HoldingsProps) {
                             className="bg-accent/5 border-b border-border/30"
                           >
                             <td colSpan={12}>
-                              <AnalyticsPanel asset={asset} />
+                              <AnalyticsPanel
+                                asset={asset}
+                                fmtCurrency={fmtCurrency}
+                              />
                             </td>
                           </tr>
                         )}

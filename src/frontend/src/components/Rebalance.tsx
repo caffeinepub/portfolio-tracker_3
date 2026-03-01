@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { useMemo } from "react";
 import type { Portfolio } from "../backend.d";
+import { useCurrency } from "../hooks/useCurrency";
 import { useRebalanceSuggestions } from "../hooks/useQueries";
 
 interface RebalanceProps {
@@ -25,16 +26,8 @@ function fmt(val: number, decimals = 2) {
   });
 }
 
-function fmtCurrency(val: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(val);
-}
-
 export default function Rebalance({ portfolioId, portfolio }: RebalanceProps) {
+  const { fmtCurrency } = useCurrency();
   const suggestionsQuery = useRebalanceSuggestions(portfolioId);
   const suggestions = suggestionsQuery.data ?? [];
   const loading = suggestionsQuery.isLoading;

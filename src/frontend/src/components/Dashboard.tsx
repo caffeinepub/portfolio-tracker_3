@@ -19,6 +19,7 @@ import {
   Tooltip,
 } from "recharts";
 import type { Portfolio } from "../backend.d";
+import { useCurrency } from "../hooks/useCurrency";
 import { usePortfolioSummary } from "../hooks/useQueries";
 import PriceRefreshBar from "./PriceRefreshBar";
 
@@ -43,15 +44,6 @@ function fmt(val: number, decimals = 2) {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
   });
-}
-
-function fmtCurrency(val: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(val);
 }
 
 function SummaryCard({
@@ -125,9 +117,11 @@ function SummaryCard({
 const CustomTooltip = ({
   active,
   payload,
+  fmtCurrency,
 }: {
   active?: boolean;
   payload?: Array<{ name: string; value: number; payload: { pct: number } }>;
+  fmtCurrency: (val: number) => string;
 }) => {
   if (active && payload && payload.length) {
     const entry = payload[0];
@@ -147,6 +141,7 @@ const CustomTooltip = ({
 };
 
 export default function Dashboard({ portfolioId, portfolio }: DashboardProps) {
+  const { fmtCurrency } = useCurrency();
   const summaryQuery = usePortfolioSummary(portfolioId);
   const summary = summaryQuery.data;
   const loading = summaryQuery.isLoading;
@@ -329,7 +324,9 @@ export default function Dashboard({ portfolioId, portfolio }: DashboardProps) {
                           />
                         ))}
                       </Pie>
-                      <Tooltip content={<CustomTooltip />} />
+                      <Tooltip
+                        content={<CustomTooltip fmtCurrency={fmtCurrency} />}
+                      />
                       <Legend
                         formatter={(value) => (
                           <span className="text-xs text-foreground">

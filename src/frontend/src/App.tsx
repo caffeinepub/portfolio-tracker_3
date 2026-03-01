@@ -11,6 +11,7 @@ import Rebalance from "./components/Rebalance";
 import Settings from "./components/Settings";
 import Sidebar from "./components/Sidebar";
 import { useActor } from "./hooks/useActor";
+import { CurrencyProvider } from "./hooks/useCurrency";
 import { useInternetIdentity } from "./hooks/useInternetIdentity";
 import {
   useCreatePortfolio,
@@ -192,7 +193,11 @@ export default function App() {
     return <LoginScreen />;
   }
 
-  return <AuthenticatedApp actor={actor} actorLoading={actorLoading} />;
+  return (
+    <CurrencyProvider>
+      <AuthenticatedApp actor={actor} actorLoading={actorLoading} />
+    </CurrencyProvider>
+  );
 }
 
 function AuthenticatedApp({

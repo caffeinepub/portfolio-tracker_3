@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import {
   Bitcoin,
   CheckCircle2,
+  DollarSign,
   ExternalLink,
   Eye,
   EyeOff,
@@ -17,6 +18,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
+import { type Currency, useCurrency } from "../hooks/useCurrency";
 import { STOCK_API_KEY_STORAGE } from "../hooks/useQueries";
 
 const SUPPORTED_CRYPTO = [
@@ -41,6 +43,25 @@ const SUPPORTED_CRYPTO = [
 ];
 
 export default function Settings() {
+  const { currency, setCurrency, rates } = useCurrency();
+
+  const CURRENCY_LABELS: Record<Currency, string> = {
+    USD: "USD",
+    CAD: "CAD",
+    EUR: "EUR",
+    GBP: "GBP",
+    JPY: "JPY",
+    PHP: "PHP",
+  };
+
+  const CURRENCY_RATE_LABELS: Record<Currency, string> = {
+    USD: "Base currency",
+    CAD: `1 USD ≈ ${rates.CAD.toFixed(4)} CAD`,
+    EUR: `1 USD ≈ ${rates.EUR.toFixed(4)} EUR`,
+    GBP: `1 USD ≈ ${rates.GBP.toFixed(4)} GBP`,
+    JPY: `1 USD ≈ ${rates.JPY.toFixed(2)} JPY`,
+    PHP: `1 USD ≈ ${rates.PHP.toFixed(4)} PHP`,
+  };
   const [apiKey, setApiKey] = useState("");
   const [savedKey, setSavedKey] = useState<string | null>(null);
   const [showKey, setShowKey] = useState(false);
@@ -87,6 +108,51 @@ export default function Settings() {
       </div>
 
       <div className="px-6 py-6 max-w-2xl space-y-6">
+        {/* Display Currency */}
+        <Card className="border-border bg-card">
+          <CardHeader className="pb-4">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-md bg-primary/10 flex items-center justify-center">
+                <DollarSign className="w-4 h-4 text-primary" />
+              </div>
+              <CardTitle className="text-base font-semibold text-foreground">
+                Display Currency
+              </CardTitle>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-muted-foreground leading-relaxed">
+              Choose the currency used to display all portfolio values and
+              calculations.
+            </p>
+
+            <div className="grid grid-cols-3 gap-2">
+              {(["USD", "CAD", "EUR", "GBP", "JPY", "PHP"] as Currency[]).map(
+                (c) => (
+                  <Button
+                    key={c}
+                    variant="outline"
+                    onClick={() => setCurrency(c)}
+                    className={cn(
+                      "h-11 text-sm font-semibold tracking-wide transition-all duration-200",
+                      currency === c
+                        ? "bg-primary text-primary-foreground border-primary hover:bg-primary/90 hover:text-primary-foreground"
+                        : "bg-card border-border text-muted-foreground hover:border-primary/50 hover:text-foreground",
+                    )}
+                  >
+                    {CURRENCY_LABELS[c]}
+                  </Button>
+                ),
+              )}
+            </div>
+
+            <p className="text-[11px] text-muted-foreground leading-relaxed">
+              {CURRENCY_RATE_LABELS[currency]}. Exchange rates are fetched live
+              on page load.
+            </p>
+          </CardContent>
+        </Card>
+
         {/* Stock Price API Key */}
         <Card className="border-border bg-card">
           <CardHeader className="pb-4">
