@@ -1,46 +1,50 @@
 # Portfolio Tracker
 
 ## Current State
-Full-stack ICP app with Motoko backend and React frontend. Features:
-- Internet Identity login gate
-- Multi-portfolio management (create, delete)
-- Asset management per portfolio (add, edit, remove) with analytics fields (marketCap, P/E ratio, sector, dividendYield, beta, notes)
-- Dashboard with portfolio summary, allocation charts
-- Rebalance tab with suggestions based on target allocation %
-- Optimizer tab with Bull/Bear market condition + Aggressive/Balanced/Conservative risk profiles
-
-Prices are all manually entered (`currentPrice` field on Asset). No live price data exists.
+Full-stack portfolio tracker with:
+- Backend: Motoko canister storing portfolios and assets with fields including beta, P/E ratio, sector, dividend yield, market cap, notes
+- Frontend: Dashboard (allocation charts, summary cards), Holdings (add/edit/delete assets, analytics panel), Rebalance (target allocation suggestions), Optimizer (Bull/Bear + Aggressive/Balanced/Conservative profile rebalancing), Settings (currency toggle, API key)
+- Live price refresh via CoinGecko (crypto) and Finnhub (stocks)
+- Currency display: USD, CAD, EUR, GBP, JPY, PHP
 
 ## Requested Changes (Diff)
 
 ### Add
-- **Backend**: HTTP outcall to CoinGecko free API to fetch live prices for crypto assets (BTC, ETH, SOL, etc.) by ticker symbol. Map common crypto tickers to CoinGecko IDs.
-- **Backend**: Per-user storage of a stock price API key (e.g. Finnhub or Alpha Vantage). `saveStockApiKey(key: Text)` and `getStockApiKey()` functions.
-- **Backend**: HTTP outcall to Finnhub stock API using the user's stored API key to fetch live prices for stock assets.
-- **Backend**: `refreshPrices(portfolioId: Nat)` shared function that fetches live prices for all assets in a portfolio (crypto via CoinGecko, stocks via Finnhub if API key is set), and updates `currentPrice` on each asset in-place.
-- **Backend**: `getLastPriceRefresh(portfolioId: Nat)` query that returns the last timestamp (Int, nanoseconds) when prices were refreshed for that portfolio, or null.
-- **Frontend**: "Refresh Prices" button on Holdings and/or Dashboard page that calls `refreshPrices`, shows a loading spinner, and updates the UI on completion.
-- **Frontend**: Last-updated timestamp displayed near the Refresh button showing how fresh the data is.
-- **Frontend**: Settings section (or modal) where the user can enter and save their stock price API key. Show a placeholder/hint that it's for Finnhub. Key is stored per-user in the backend.
+- **Analytics page** (new tab in sidebar): dedicated page showing portfolio-level risk and performance metrics
+  - **Sharpe Ratio**: computed client-side from asset returns and volatility proxy using beta and gain/loss
+  - **Sortino Ratio**: downside-only volatility version of Sharpe
+  - **Portfolio Beta**: weighted average beta across all assets
+  - **Maximum Drawdown**: estimated from cost basis vs current value per asset, showing worst unrealized drawdown
+  - **Value at Risk (VaR) 95%**: parametric VaR estimate based on portfolio volatility
+  - **Correlation Matrix**: heatmap of pairwise sector/type correlation across assets
+  - **Asset Class Risk Breakdown**: bar chart showing risk contribution by sector and asset type
+  - **Factor Exposure cards**: Value (avg P/E), Growth (avg beta), Dividend Income (avg yield), Volatility
+  - **Efficient Frontier visualization**: 2D scatter plot showing risk vs return tradeoffs for different allocation scenarios
+
+- **New backend query**: `getAnalytics(portfolioId)` returning pre-computed portfolio-level metrics: weightedBeta, totalVolatility, estimatedVar95, maxDrawdown, sharpeRatio, sortinoRatio, sectorConcentration
 
 ### Modify
-- **Backend**: After `refreshPrices` updates prices, the existing `getPortfolioSummary` and `getAssets` queries will automatically return the updated prices (no change needed to those functions -- prices are stored on the Asset record).
+- **Sidebar**: add "Analytics" tab between Optimizer and Settings with a chart/activity icon
+- **App.tsx**: add `analytics` to `ActiveView` type and render `<Analytics>` component
+- **Holdings form**: add PEG Ratio, Price-to-Book (P/B), Debt-to-Equity (D/E), ROE, Free Cash Flow Yield fields to the Analytics & Fundamentals collapsible section
+- **Asset type**: add new optional fields: `pegRatio`, `priceToBook`, `debtToEquity`, `roe`, `freeCashFlowYield` to the Asset record in backend
 
 ### Remove
-- Nothing removed.
+- Nothing removed
 
 ## Implementation Plan
-1. Add `http-outcalls` Caffeine component (enables `ExperimentalInternetComputer.http_request` in Motoko).
-2. Regenerate Motoko backend with:
-   - `userStockApiKey` map (Principal → Text) for storing API keys
-   - `lastPriceRefresh` map (Principal → Map<Nat, Int>) for per-portfolio refresh timestamps
-   - `saveStockApiKey` / `getStockApiKey` shared/query functions
-   - `getLastPriceRefresh` query function
-   - `refreshPrices` shared function: iterates assets, calls CoinGecko for crypto, calls Finnhub for stocks (if key present), updates asset currentPrice
-   - CoinGecko ticker-to-ID mapping (BTC→bitcoin, ETH→ethereum, SOL→solana, ADA→cardano, DOT→polkadot, AVAX→avalanche-2, MATIC→matic-network, LINK→chainlink, UNI→uniswap, DOGE→dogecoin, XRP→ripple, LTC→litecoin, BCH→bitcoin-cash)
-3. Update frontend:
-   - Add "Refresh Prices" button to Holdings and Dashboard pages
-   - Show loading state during refresh
-   - Display "Last updated: X minutes ago" or similar near the button
-   - Add a Settings page or modal with a stock API key input field (labeled for Finnhub), save button, and confirmation toast
-   - Show a note that crypto prices use CoinGecko (free, no key needed) and stock prices require a Finnhub API key
+1. Update `Asset` type in `main.mo` to add 5 new optional fields (pegRatio, priceToBook, debtToEquity, roe, freeCashFlowYield)
+2. Add `PortfolioAnalytics` return type and `getAnalytics` query function in backend
+3. Update `addAsset` and `updateAsset` backend functions to accept new fields
+4. Update `initialize` seed data to include sample values for new fields
+5. Regenerate `backend.d.ts` with new types
+6. Add `useAnalytics` hook to `useQueries.ts`
+7. Create `Analytics.tsx` component with:
+   - Summary metric cards (Sharpe, Sortino, Beta, VaR, Max Drawdown)
+   - Sector concentration bar chart using recharts
+   - Correlation matrix heatmap (sector/type cross-tab)
+   - Efficient Frontier scatter using mock simulated allocations
+   - Factor exposure cards (Value, Growth, Income, Volatility)
+8. Update `Holdings.tsx` form to add 5 new optional analytics fields
+9. Update `App.tsx` to include `analytics` view
+10. Update `Sidebar.tsx` to show Analytics nav item

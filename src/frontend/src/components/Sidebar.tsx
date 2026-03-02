@@ -27,6 +27,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import {
+  Activity,
   ChevronDown,
   LayoutDashboard,
   LineChart,
@@ -65,6 +66,7 @@ const navItems: {
   { id: "holdings", label: "Holdings", icon: LineChart },
   { id: "rebalance", label: "Rebalance", icon: Scale },
   { id: "optimizer", label: "Optimizer", icon: Sliders },
+  { id: "analytics", label: "Analytics", icon: Activity },
 ];
 
 const bottomNavItems: {
