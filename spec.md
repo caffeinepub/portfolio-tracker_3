@@ -1,50 +1,31 @@
 # Portfolio Tracker
 
 ## Current State
-Full-stack portfolio tracker with:
-- Backend: Motoko canister storing portfolios and assets with fields including beta, P/E ratio, sector, dividend yield, market cap, notes
-- Frontend: Dashboard (allocation charts, summary cards), Holdings (add/edit/delete assets, analytics panel), Rebalance (target allocation suggestions), Optimizer (Bull/Bear + Aggressive/Balanced/Conservative profile rebalancing), Settings (currency toggle, API key)
-- Live price refresh via CoinGecko (crypto) and Finnhub (stocks)
-- Currency display: USD, CAD, EUR, GBP, JPY, PHP
+
+- **Analytics tab** (`Analytics.tsx`): Shows risk metrics (Sharpe, Sortino, Beta, VaR, P/E), factor exposure cards, a sector concentration bar chart, a correlation matrix heatmap, and an efficient frontier scatter plot.
+- **Charts tab** (`Charts.tsx`): Shows 5 portfolio-level charts: Portfolio Allocation (donut), Gain/Loss by Asset (horizontal bar), Market Value vs Cost Basis (grouped bar), Asset Class Split (donut), and Sector Concentration (horizontal bar).
 
 ## Requested Changes (Diff)
 
 ### Add
-- **Analytics page** (new tab in sidebar): dedicated page showing portfolio-level risk and performance metrics
-  - **Sharpe Ratio**: computed client-side from asset returns and volatility proxy using beta and gain/loss
-  - **Sortino Ratio**: downside-only volatility version of Sharpe
-  - **Portfolio Beta**: weighted average beta across all assets
-  - **Maximum Drawdown**: estimated from cost basis vs current value per asset, showing worst unrealized drawdown
-  - **Value at Risk (VaR) 95%**: parametric VaR estimate based on portfolio volatility
-  - **Correlation Matrix**: heatmap of pairwise sector/type correlation across assets
-  - **Asset Class Risk Breakdown**: bar chart showing risk contribution by sector and asset type
-  - **Factor Exposure cards**: Value (avg P/E), Growth (avg beta), Dividend Income (avg yield), Volatility
-  - **Efficient Frontier visualization**: 2D scatter plot showing risk vs return tradeoffs for different allocation scenarios
-
-- **New backend query**: `getAnalytics(portfolioId)` returning pre-computed portfolio-level metrics: weightedBeta, totalVolatility, estimatedVar95, maxDrawdown, sharpeRatio, sortinoRatio, sectorConcentration
+- In **Analytics tab**: Add all 5 portfolio-level charts currently in Charts.tsx — Portfolio Allocation donut, Gain/Loss by Asset, Value vs Cost Basis, Asset Class Split donut, and Sector Concentration bar — as a new "Portfolio Charts" section after the existing analytics sections.
+- In **Charts tab**: Replace current content with per-asset price history charts. Each asset in the portfolio gets its own chart card. Each card has a toggle to switch between **Line** and **Candlestick** chart types. Price history is simulated (generated deterministically from asset data) since there is no historical price API. Display at least 30 data points of simulated daily OHLCV data. Each asset card shows the asset ticker as the title.
 
 ### Modify
-- **Sidebar**: add "Analytics" tab between Optimizer and Settings with a chart/activity icon
-- **App.tsx**: add `analytics` to `ActiveView` type and render `<Analytics>` component
-- **Holdings form**: add PEG Ratio, Price-to-Book (P/B), Debt-to-Equity (D/E), ROE, Free Cash Flow Yield fields to the Analytics & Fundamentals collapsible section
-- **Asset type**: add new optional fields: `pegRatio`, `priceToBook`, `debtToEquity`, `roe`, `freeCashFlowYield` to the Asset record in backend
+- `Analytics.tsx`: Import and embed the chart components/logic from Charts.tsx at the bottom of the Analytics content area (new section labeled "Portfolio Charts").
+- `Charts.tsx`: Replace all existing chart content with a per-asset chart grid. Each asset card has a Line/Candlestick toggle. Use recharts for rendering; for candlestick use a custom recharts shape since recharts doesn't have a native candlestick. Simulate OHLCV price data deterministically using the asset's ticker and current price as a seed.
 
 ### Remove
-- Nothing removed
+- Remove the original 5 portfolio-level charts from the Charts tab (they move to Analytics).
 
 ## Implementation Plan
-1. Update `Asset` type in `main.mo` to add 5 new optional fields (pegRatio, priceToBook, debtToEquity, roe, freeCashFlowYield)
-2. Add `PortfolioAnalytics` return type and `getAnalytics` query function in backend
-3. Update `addAsset` and `updateAsset` backend functions to accept new fields
-4. Update `initialize` seed data to include sample values for new fields
-5. Regenerate `backend.d.ts` with new types
-6. Add `useAnalytics` hook to `useQueries.ts`
-7. Create `Analytics.tsx` component with:
-   - Summary metric cards (Sharpe, Sortino, Beta, VaR, Max Drawdown)
-   - Sector concentration bar chart using recharts
-   - Correlation matrix heatmap (sector/type cross-tab)
-   - Efficient Frontier scatter using mock simulated allocations
-   - Factor exposure cards (Value, Growth, Income, Volatility)
-8. Update `Holdings.tsx` form to add 5 new optional analytics fields
-9. Update `App.tsx` to include `analytics` view
-10. Update `Sidebar.tsx` to show Analytics nav item
+
+1. **Analytics.tsx**: Add a new "Portfolio Charts" section at the bottom of the analytics content (before the methodology note). Copy the chart rendering logic from Charts.tsx into Analytics.tsx — the data computations (allocationData, gainLossData, etc.) and the chart JSX. Import `useCurrency` hook. Add all necessary recharts imports.
+
+2. **Charts.tsx**: Rewrite the main content area to render one card per asset. 
+   - Fetch assets via `useAssets(portfolioId)`.
+   - Generate simulated OHLCV data (30+ daily points) for each asset deterministically using the asset ticker + current price.
+   - Each card: title = asset ticker + name, toggle buttons for Line / Candlestick.
+   - Line chart: recharts `LineChart` with closing price.
+   - Candlestick: recharts `ComposedChart` with custom bar shapes rendering open/high/low/close as a candle (body + wick).
+   - State: per-asset chart type toggle stored in a `Record<string, 'line' | 'candle'>` state.

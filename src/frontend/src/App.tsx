@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import type { Portfolio } from "./backend.d";
 import Analytics from "./components/Analytics";
+import Charts from "./components/Charts";
 import Dashboard from "./components/Dashboard";
 import Holdings from "./components/Holdings";
 import Optimizer from "./components/Optimizer";
@@ -26,6 +27,7 @@ export type ActiveView =
   | "rebalance"
   | "optimizer"
   | "analytics"
+  | "charts"
   | "settings";
 
 function LoginScreen() {
@@ -321,6 +323,12 @@ function AuthenticatedApp({
         )}
         {activeView === "analytics" && (
           <Analytics
+            portfolioId={selectedPortfolioId}
+            portfolio={selectedPortfolio}
+          />
+        )}
+        {activeView === "charts" && (
+          <Charts
             portfolioId={selectedPortfolioId}
             portfolio={selectedPortfolio}
           />

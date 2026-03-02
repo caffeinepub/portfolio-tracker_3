@@ -14,6 +14,10 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  Legend,
+  Pie,
+  PieChart,
+  ReferenceLine,
   ResponsiveContainer,
   Scatter,
   ScatterChart,
@@ -22,6 +26,7 @@ import {
   YAxis,
 } from "recharts";
 import type { Portfolio } from "../backend.d";
+import { useCurrency } from "../hooks/useCurrency";
 import { useAssets, usePortfolioSummary } from "../hooks/useQueries";
 
 interface AnalyticsProps {
@@ -39,6 +44,11 @@ const CHART_COLORS = [
   "oklch(0.7 0.16 55)",
   "oklch(0.6 0.15 260)",
 ];
+
+const GAIN_COLOR = "oklch(0.72 0.16 145)";
+const LOSS_COLOR = "oklch(0.65 0.2 25)";
+const GRID_STROKE = "oklch(0.28 0.015 240 / 0.5)";
+const AXIS_TICK = { fill: "oklch(0.55 0.015 240)", fontSize: 11 };
 
 function fmt(v: number, d = 2) {
   return v.toLocaleString("en-US", {
@@ -168,6 +178,186 @@ function FactorCard({
   );
 }
 
+// ── Portfolio Charts tooltip components ───────────────────────────────────────
+
+const AllocationTooltip = ({
+  active,
+  payload,
+}: {
+  active?: boolean;
+  payload?: Array<{
+    name: string;
+    value: number;
+    payload: { name: string; value: number; pct: number };
+  }>;
+}) => {
+  if (active && payload?.length) {
+    const d = payload[0].payload;
+    return (
+      <div className="bg-popover border border-border rounded-lg px-3 py-2 shadow-xl text-sm">
+        <div className="font-semibold text-foreground">{d.name}</div>
+        <div className="text-muted-foreground text-xs mt-0.5">
+          <span className="text-primary font-mono">{fmt(d.pct, 1)}%</span> of
+          portfolio
+        </div>
+      </div>
+    );
+  }
+  return null;
+};
+
+const GainLossTooltip = ({
+  active,
+  payload,
+}: {
+  active?: boolean;
+  payload?: Array<{
+    value: number;
+    payload: { ticker: string; gainLossPct: number };
+  }>;
+}) => {
+  if (active && payload?.length) {
+    const d = payload[0].payload;
+    const pct = d.gainLossPct;
+    return (
+      <div className="bg-popover border border-border rounded-lg px-3 py-2 shadow-xl text-sm">
+        <div className="font-semibold text-foreground">{d.ticker}</div>
+        <div
+          className="font-mono text-sm mt-0.5"
+          style={{ color: pct >= 0 ? GAIN_COLOR : LOSS_COLOR }}
+        >
+          {pct >= 0 ? "+" : ""}
+          {fmt(pct, 2)}%
+        </div>
+      </div>
+    );
+  }
+  return null;
+};
+
+const ValueCostTooltip = ({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean;
+  payload?: Array<{ name: string; value: number; fill: string }>;
+  label?: string;
+}) => {
+  if (active && payload?.length) {
+    return (
+      <div className="bg-popover border border-border rounded-lg px-3 py-2 shadow-xl text-sm">
+        <div className="font-semibold text-foreground mb-1">{label}</div>
+        {payload.map((p) => (
+          <div key={p.name} className="flex items-center gap-2 text-xs">
+            <div
+              className="w-2 h-2 rounded-full"
+              style={{ background: p.fill }}
+            />
+            <span className="text-muted-foreground">{p.name}:</span>
+            <span className="font-mono text-foreground">
+              ${fmt(p.value, 2)}
+            </span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+  return null;
+};
+
+const AssetClassTooltip = ({
+  active,
+  payload,
+}: {
+  active?: boolean;
+  payload?: Array<{
+    name: string;
+    value: number;
+    payload: { name: string; value: number; pct: number };
+  }>;
+}) => {
+  if (active && payload?.length) {
+    const d = payload[0].payload;
+    return (
+      <div className="bg-popover border border-border rounded-lg px-3 py-2 shadow-xl text-sm">
+        <div className="font-semibold text-foreground">{d.name}</div>
+        <div className="text-xs text-muted-foreground mt-0.5">
+          <span className="text-primary font-mono">{fmt(d.pct, 1)}%</span> of
+          portfolio
+        </div>
+      </div>
+    );
+  }
+  return null;
+};
+
+const ChartsSectorTooltip = ({
+  active,
+  payload,
+}: {
+  active?: boolean;
+  payload?: Array<{ value: number; payload: { sector: string; pct: number } }>;
+}) => {
+  if (active && payload?.length) {
+    const d = payload[0].payload;
+    return (
+      <div className="bg-popover border border-border rounded-lg px-3 py-2 shadow-xl text-sm">
+        <div className="font-semibold text-foreground">{d.sector}</div>
+        <div className="font-mono text-primary text-sm mt-0.5">
+          {fmt(d.pct, 1)}%
+        </div>
+      </div>
+    );
+  }
+  return null;
+};
+
+// Custom pie label for portfolio charts
+const renderCustomPieLabel = ({
+  cx,
+  cy,
+  midAngle,
+  innerRadius,
+  outerRadius,
+  pct,
+}: {
+  cx: number;
+  cy: number;
+  midAngle: number;
+  innerRadius: number;
+  outerRadius: number;
+  pct: number;
+}) => {
+  const RADIAN = Math.PI / 180;
+  const radius = innerRadius + (outerRadius - innerRadius) * 0.5;
+  const x = cx + radius * Math.cos(-midAngle * RADIAN);
+  const y = cy + radius * Math.sin(-midAngle * RADIAN);
+  if (pct < 5) return null;
+  return (
+    <text
+      x={x}
+      y={y}
+      fill="oklch(0.92 0.01 240)"
+      textAnchor="middle"
+      dominantBaseline="central"
+      fontSize={11}
+      fontWeight={600}
+    >
+      {fmt(pct, 0)}%
+    </text>
+  );
+};
+
+// Chart skeleton for portfolio charts section
+function ChartSkeleton({ height = 260 }: { height?: number }) {
+  return (
+    <div className="space-y-2 pt-2">
+      <Skeleton className="w-full rounded-lg" style={{ height }} />
+    </div>
+  );
+}
+
 // Custom tooltip for sector bar chart
 const SectorTooltip = ({
   active,
@@ -246,6 +436,7 @@ function corrColor(c: number) {
 export default function Analytics({ portfolioId, portfolio }: AnalyticsProps) {
   const summaryQuery = usePortfolioSummary(portfolioId);
   const assetsQuery = useAssets(portfolioId);
+  const { fmtCurrency } = useCurrency();
 
   const summary = summaryQuery.data;
   const assets = assetsQuery.data ?? [];
@@ -481,6 +672,71 @@ export default function Analytics({ portfolioId, portfolio }: AnalyticsProps) {
 
     return { peRating, growthRating, incomeRating, volatilityRating };
   }, [metrics]);
+
+  // ── Portfolio Charts Data ──────────────────────────────────────────────────
+
+  // 1. Portfolio Allocation (donut)
+  const allocationData = useMemo(() => {
+    if (!summary) return [];
+    return summary.assets.map((ab) => ({
+      name: ab.asset.ticker,
+      value: ab.value,
+      pct: ab.actualAllocationPct,
+    }));
+  }, [summary]);
+
+  // 2. Gain / Loss by Asset (horizontal bar)
+  const gainLossData = useMemo(() => {
+    if (!summary) return [];
+    return [...summary.assets]
+      .sort((a, b) => b.gainLossPct - a.gainLossPct)
+      .map((ab) => ({
+        ticker: ab.asset.ticker,
+        gainLossPct: ab.gainLossPct,
+        fill: ab.gainLossPct >= 0 ? GAIN_COLOR : LOSS_COLOR,
+      }));
+  }, [summary]);
+
+  // 3. Value vs Cost Basis (grouped bar)
+  const valueCostData = useMemo(() => {
+    if (!summary) return [];
+    return summary.assets.map((ab) => ({
+      ticker: ab.asset.ticker,
+      "Market Value": ab.value,
+      "Cost Basis": ab.cost,
+    }));
+  }, [summary]);
+
+  // 4. Asset Class Split (donut)
+  const assetClassData = useMemo(() => {
+    if (!summary || summary.totalMarketValue === 0) return [];
+    const byType: Record<string, number> = {};
+    for (const ab of summary.assets) {
+      const key = ab.asset.assetType ?? "Other";
+      byType[key] = (byType[key] ?? 0) + ab.value;
+    }
+    return Object.entries(byType).map(([name, value]) => ({
+      name: name.charAt(0).toUpperCase() + name.slice(1),
+      value,
+      pct: (value / summary.totalMarketValue) * 100,
+    }));
+  }, [summary]);
+
+  // 5. Sector Concentration for portfolio charts (horizontal bar)
+  const sectorChartData = useMemo(() => {
+    if (!summary || summary.totalMarketValue === 0) return [];
+    const byGroup: Record<string, number> = {};
+    for (const ab of summary.assets) {
+      const key = ab.asset.sector ?? ab.asset.assetType ?? "Other";
+      byGroup[key] = (byGroup[key] ?? 0) + ab.value;
+    }
+    return Object.entries(byGroup)
+      .map(([sector, value]) => ({
+        sector,
+        pct: (value / summary.totalMarketValue) * 100,
+      }))
+      .sort((a, b) => b.pct - a.pct);
+  }, [summary]);
 
   // ── Empty / loading states ─────────────────────────────────────────────────
   if (!portfolioId || !portfolio) {
@@ -1060,7 +1316,344 @@ export default function Analytics({ portfolioId, portfolio }: AnalyticsProps) {
               </CardContent>
             </Card>
 
-            {/* ── Section 5: Methodology note ─────────────────────────────────── */}
+            {/* ── Section 5: Portfolio Charts ──────────────────────────────────── */}
+            <section>
+              <div className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground mb-3">
+                Portfolio Charts
+              </div>
+
+              {/* Row 1: Allocation donut + Gain/Loss bar */}
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 mb-5">
+                {/* 1. Portfolio Allocation Donut */}
+                <Card className="border-border bg-card">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-semibold text-foreground">
+                      Portfolio Allocation
+                    </CardTitle>
+                    <p className="text-xs text-muted-foreground">
+                      Current market value distribution by asset
+                    </p>
+                  </CardHeader>
+                  <CardContent>
+                    {loading ? (
+                      <ChartSkeleton height={280} />
+                    ) : allocationData.length === 0 ? (
+                      <div className="flex items-center justify-center h-64 text-muted-foreground text-sm">
+                        No data
+                      </div>
+                    ) : (
+                      <ResponsiveContainer width="100%" height={280}>
+                        <PieChart>
+                          <Pie
+                            data={allocationData}
+                            cx="50%"
+                            cy="45%"
+                            innerRadius={70}
+                            outerRadius={110}
+                            paddingAngle={2}
+                            dataKey="value"
+                            labelLine={false}
+                            label={renderCustomPieLabel}
+                          >
+                            {allocationData.map((entry, idx) => (
+                              <Cell
+                                key={`alloc-${entry.name}`}
+                                fill={CHART_COLORS[idx % CHART_COLORS.length]}
+                              />
+                            ))}
+                          </Pie>
+                          <Tooltip content={<AllocationTooltip />} />
+                          <Legend
+                            iconType="circle"
+                            iconSize={8}
+                            wrapperStyle={{
+                              fontSize: "11px",
+                              color: "oklch(0.7 0.01 240)",
+                            }}
+                            formatter={(value) => (
+                              <span style={{ color: "oklch(0.7 0.01 240)" }}>
+                                {value}
+                              </span>
+                            )}
+                          />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    )}
+                  </CardContent>
+                </Card>
+
+                {/* 2. Gain / Loss by Asset */}
+                <Card className="border-border bg-card">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-semibold text-foreground">
+                      Gain / Loss by Asset
+                    </CardTitle>
+                    <p className="text-xs text-muted-foreground">
+                      Unrealized return % per holding
+                    </p>
+                  </CardHeader>
+                  <CardContent>
+                    {loading ? (
+                      <ChartSkeleton height={280} />
+                    ) : gainLossData.length === 0 ? (
+                      <div className="flex items-center justify-center h-64 text-muted-foreground text-sm">
+                        No data
+                      </div>
+                    ) : (
+                      <ResponsiveContainer width="100%" height={280}>
+                        <BarChart
+                          data={gainLossData}
+                          layout="vertical"
+                          margin={{ top: 4, right: 16, bottom: 4, left: 0 }}
+                        >
+                          <CartesianGrid
+                            horizontal={false}
+                            stroke={GRID_STROKE}
+                            strokeDasharray="3 3"
+                          />
+                          <XAxis
+                            type="number"
+                            tickFormatter={(v) =>
+                              `${v >= 0 ? "+" : ""}${fmt(v, 0)}%`
+                            }
+                            tick={AXIS_TICK}
+                            axisLine={false}
+                            tickLine={false}
+                          />
+                          <YAxis
+                            type="category"
+                            dataKey="ticker"
+                            tick={{ fill: "oklch(0.7 0.01 240)", fontSize: 11 }}
+                            axisLine={false}
+                            tickLine={false}
+                            width={50}
+                          />
+                          <Tooltip content={<GainLossTooltip />} />
+                          <ReferenceLine
+                            x={0}
+                            stroke="oklch(0.45 0.015 240)"
+                            strokeWidth={1}
+                          />
+                          <Bar
+                            dataKey="gainLossPct"
+                            radius={[0, 4, 4, 0]}
+                            maxBarSize={22}
+                          >
+                            {gainLossData.map((entry) => (
+                              <Cell
+                                key={`gl-${entry.ticker}`}
+                                fill={entry.fill}
+                              />
+                            ))}
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
+
+              {/* Row 2: Value vs Cost Basis (full width) */}
+              <Card className="border-border bg-card mb-5">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-semibold text-foreground">
+                    Market Value vs Cost Basis
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground">
+                    Compare what you paid vs current value per asset
+                  </p>
+                </CardHeader>
+                <CardContent>
+                  {loading ? (
+                    <ChartSkeleton height={300} />
+                  ) : valueCostData.length === 0 ? (
+                    <div className="flex items-center justify-center h-64 text-muted-foreground text-sm">
+                      No data
+                    </div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height={300}>
+                      <BarChart
+                        data={valueCostData}
+                        margin={{ top: 8, right: 16, bottom: 4, left: 8 }}
+                        barCategoryGap="25%"
+                        barGap={4}
+                      >
+                        <CartesianGrid
+                          vertical={false}
+                          stroke={GRID_STROKE}
+                          strokeDasharray="3 3"
+                        />
+                        <XAxis
+                          dataKey="ticker"
+                          tick={{ fill: "oklch(0.7 0.01 240)", fontSize: 11 }}
+                          axisLine={false}
+                          tickLine={false}
+                        />
+                        <YAxis
+                          tickFormatter={(v) => fmtCurrency(v)}
+                          tick={AXIS_TICK}
+                          axisLine={false}
+                          tickLine={false}
+                          width={80}
+                        />
+                        <Tooltip content={<ValueCostTooltip />} />
+                        <Legend
+                          iconType="circle"
+                          iconSize={8}
+                          wrapperStyle={{ fontSize: "11px" }}
+                          formatter={(value) => (
+                            <span style={{ color: "oklch(0.7 0.01 240)" }}>
+                              {value}
+                            </span>
+                          )}
+                        />
+                        <Bar
+                          dataKey="Market Value"
+                          fill={CHART_COLORS[0]}
+                          radius={[4, 4, 0, 0]}
+                          maxBarSize={40}
+                        />
+                        <Bar
+                          dataKey="Cost Basis"
+                          fill={CHART_COLORS[2]}
+                          radius={[4, 4, 0, 0]}
+                          maxBarSize={40}
+                        />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Row 3: Asset Class Split donut + Sector bar */}
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+                {/* 4. Asset Class Split Donut */}
+                <Card className="border-border bg-card">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-semibold text-foreground">
+                      Asset Class Split
+                    </CardTitle>
+                    <p className="text-xs text-muted-foreground">
+                      Portfolio weight by asset class (stock vs crypto)
+                    </p>
+                  </CardHeader>
+                  <CardContent>
+                    {loading ? (
+                      <ChartSkeleton height={260} />
+                    ) : assetClassData.length === 0 ? (
+                      <div className="flex items-center justify-center h-56 text-muted-foreground text-sm">
+                        No data
+                      </div>
+                    ) : (
+                      <ResponsiveContainer width="100%" height={260}>
+                        <PieChart>
+                          <Pie
+                            data={assetClassData}
+                            cx="50%"
+                            cy="44%"
+                            innerRadius={65}
+                            outerRadius={100}
+                            paddingAngle={3}
+                            dataKey="value"
+                            labelLine={false}
+                            label={renderCustomPieLabel}
+                          >
+                            {assetClassData.map((entry, idx) => (
+                              <Cell
+                                key={`cls-${entry.name}`}
+                                fill={
+                                  CHART_COLORS[(idx + 3) % CHART_COLORS.length]
+                                }
+                              />
+                            ))}
+                          </Pie>
+                          <Tooltip content={<AssetClassTooltip />} />
+                          <Legend
+                            iconType="circle"
+                            iconSize={8}
+                            wrapperStyle={{ fontSize: "11px" }}
+                            formatter={(value) => (
+                              <span style={{ color: "oklch(0.7 0.01 240)" }}>
+                                {value}
+                              </span>
+                            )}
+                          />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    )}
+                  </CardContent>
+                </Card>
+
+                {/* 5. Sector Concentration (portfolio charts version) */}
+                <Card className="border-border bg-card">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-semibold text-foreground">
+                      Sector Concentration
+                    </CardTitle>
+                    <p className="text-xs text-muted-foreground">
+                      Allocation % by sector or asset class
+                    </p>
+                  </CardHeader>
+                  <CardContent>
+                    {loading ? (
+                      <ChartSkeleton height={260} />
+                    ) : sectorChartData.length === 0 ? (
+                      <div className="flex items-center justify-center h-56 text-muted-foreground text-sm">
+                        No sector data
+                      </div>
+                    ) : (
+                      <ResponsiveContainer width="100%" height={260}>
+                        <BarChart
+                          data={sectorChartData}
+                          layout="vertical"
+                          margin={{ top: 0, right: 8, bottom: 0, left: 0 }}
+                        >
+                          <CartesianGrid
+                            horizontal={false}
+                            stroke={GRID_STROKE}
+                            strokeDasharray="3 3"
+                          />
+                          <XAxis
+                            type="number"
+                            domain={[0, 100]}
+                            tickFormatter={(v) => `${v}%`}
+                            tick={AXIS_TICK}
+                            axisLine={false}
+                            tickLine={false}
+                          />
+                          <YAxis
+                            type="category"
+                            dataKey="sector"
+                            tick={{
+                              fill: "oklch(0.7 0.01 240)",
+                              fontSize: 11,
+                            }}
+                            axisLine={false}
+                            tickLine={false}
+                            width={80}
+                          />
+                          <Tooltip content={<ChartsSectorTooltip />} />
+                          <Bar
+                            dataKey="pct"
+                            radius={[0, 4, 4, 0]}
+                            maxBarSize={24}
+                          >
+                            {sectorChartData.map((entry, idx) => (
+                              <Cell
+                                key={`sec-${entry.sector}`}
+                                fill={CHART_COLORS[idx % CHART_COLORS.length]}
+                              />
+                            ))}
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
+            </section>
+
+            {/* ── Section 6: Methodology note ─────────────────────────────────── */}
             <Card className="border-border bg-card/50">
               <CardContent className="py-4">
                 <div className="text-[11px] text-muted-foreground leading-relaxed space-y-1">
