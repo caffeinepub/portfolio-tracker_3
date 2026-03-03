@@ -252,6 +252,9 @@ function AssetFormDialog({
                 <SelectContent>
                   <SelectItem value="stock">Stock</SelectItem>
                   <SelectItem value="crypto">Crypto</SelectItem>
+                  <SelectItem value="etf">ETF</SelectItem>
+                  <SelectItem value="fixed_income">Fixed Income</SelectItem>
+                  <SelectItem value="cash">Cash</SelectItem>
                 </SelectContent>
               </Select>
               {errors.assetType && (
@@ -839,7 +842,7 @@ export default function Holdings({ portfolioId, portfolio }: HoldingsProps) {
                     );
                     const allocPct =
                       totalValue > 0 ? (value / totalValue) * 100 : 0;
-                    const isStock = asset.assetType.toLowerCase() === "stock";
+                    const assetTypeLower = asset.assetType.toLowerCase();
                     const idStr = asset.id.toString();
                     const isExpanded = expandedIds.has(idStr);
                     const hasInfo = hasAnalytics(asset);
@@ -886,12 +889,26 @@ export default function Holdings({ portfolioId, portfolio }: HoldingsProps) {
                               variant="outline"
                               className={cn(
                                 "text-xs border",
-                                isStock
+                                assetTypeLower === "stock"
                                   ? "border-[oklch(0.68_0.18_200/0.5)] text-[oklch(0.68_0.18_200)] bg-[oklch(0.68_0.18_200/0.08)]"
-                                  : "border-[oklch(0.68_0.2_25/0.5)] text-[oklch(0.68_0.2_25)] bg-[oklch(0.68_0.2_25/0.08)]",
+                                  : assetTypeLower === "crypto"
+                                    ? "border-[oklch(0.68_0.2_25/0.5)] text-[oklch(0.68_0.2_25)] bg-[oklch(0.68_0.2_25/0.08)]"
+                                    : assetTypeLower === "etf"
+                                      ? "border-[oklch(0.68_0.18_140/0.5)] text-[oklch(0.68_0.18_140)] bg-[oklch(0.68_0.18_140/0.08)]"
+                                      : assetTypeLower === "fixed_income"
+                                        ? "border-[oklch(0.68_0.15_60/0.5)] text-[oklch(0.68_0.15_60)] bg-[oklch(0.68_0.15_60/0.08)]"
+                                        : "border-[oklch(0.65_0.05_240/0.5)] text-[oklch(0.65_0.05_240)] bg-[oklch(0.65_0.05_240/0.08)]",
                               )}
                             >
-                              {isStock ? "Stock" : "Crypto"}
+                              {assetTypeLower === "stock"
+                                ? "Stock"
+                                : assetTypeLower === "crypto"
+                                  ? "Crypto"
+                                  : assetTypeLower === "etf"
+                                    ? "ETF"
+                                    : assetTypeLower === "fixed_income"
+                                      ? "Fixed Income"
+                                      : "Cash"}
                             </Badge>
                           </td>
                           <td className="px-4 py-3 font-mono tabular text-right text-foreground">

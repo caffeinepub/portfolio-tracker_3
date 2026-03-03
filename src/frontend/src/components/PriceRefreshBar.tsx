@@ -45,7 +45,10 @@ export default function PriceRefreshBar({
   };
 
   const hasCrypto = assets.some((a) => a.assetType.toLowerCase() === "crypto");
-  const hasStock = assets.some((a) => a.assetType.toLowerCase() === "stock");
+  const hasExchange = assets.some((a) => {
+    const t = a.assetType.toLowerCase();
+    return t === "stock" || t === "etf" || t === "fixed_income";
+  });
 
   return (
     <div
@@ -79,9 +82,9 @@ export default function PriceRefreshBar({
             Crypto: CoinGecko (free)
           </span>
         )}
-        {hasStock && (
+        {hasExchange && (
           <span className="text-[11px] text-muted-foreground bg-muted/50 px-2 py-0.5 rounded-full whitespace-nowrap">
-            Stocks: Finnhub
+            Stocks / ETFs: Yahoo Finance
           </span>
         )}
       </div>

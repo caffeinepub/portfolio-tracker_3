@@ -234,9 +234,6 @@ export function useRefreshPrices() {
       const cryptoAssets = assets.filter(
         (a) => a.assetType.toLowerCase() === "crypto",
       );
-      const stockAssets = assets.filter(
-        (a) => a.assetType.toLowerCase() === "stock",
-      );
 
       const priceMap: Record<string, number> = {};
 
@@ -268,25 +265,73 @@ export function useRefreshPrices() {
         }
       }
 
-      // Fetch stock prices using Finnhub if key is available
+      // Fetch stock/ETF/fixed-income prices
+      // Strategy: try Finnhub first (if API key set), then fall back to Yahoo Finance (free, no key needed)
       const stockApiKey = localStorage.getItem(STOCK_API_KEY_STORAGE);
-      if (stockAssets.length > 0 && stockApiKey) {
-        const stockFetches = stockAssets.map(async (asset) => {
-          try {
-            const res = await fetch(
-              `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(asset.ticker)}&token=${stockApiKey}`,
-            );
-            if (res.ok) {
-              const data: { c: number } = await res.json();
-              if (data.c && data.c > 0) {
-                priceMap[asset.ticker.toUpperCase()] = data.c;
+
+      // Assets that need exchange-based price lookup: stock, etf, fixed_income
+      const exchangeAssets = assets.filter((a) => {
+        const t = a.assetType.toLowerCase();
+        return t === "stock" || t === "etf" || t === "fixed_income";
+      });
+
+      if (exchangeAssets.length > 0) {
+        const assetsNeedingPrice = exchangeAssets.filter(
+          (a) => priceMap[a.ticker.toUpperCase()] === undefined,
+        );
+
+        if (stockApiKey) {
+          // Use Finnhub when an API key is available
+          const finnhubFetches = assetsNeedingPrice.map(async (asset) => {
+            try {
+              const res = await fetch(
+                `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(asset.ticker)}&token=${stockApiKey}`,
+              );
+              if (res.ok) {
+                const data: { c: number } = await res.json();
+                if (data.c && data.c > 0) {
+                  priceMap[asset.ticker.toUpperCase()] = data.c;
+                }
               }
+            } catch {
+              // silently skip on error
             }
-          } catch {
-            // silently skip on error
-          }
-        });
-        await Promise.all(stockFetches);
+          });
+          await Promise.all(finnhubFetches);
+        }
+
+        // For any assets still missing prices (no Finnhub key or Finnhub failed),
+        // fall back to Yahoo Finance (free, no API key required)
+        const stillMissing = assetsNeedingPrice.filter(
+          (a) => priceMap[a.ticker.toUpperCase()] === undefined,
+        );
+        if (stillMissing.length > 0) {
+          const yahooFetches = stillMissing.map(async (asset) => {
+            try {
+              const res = await fetch(
+                `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(asset.ticker)}?interval=1d&range=1d`,
+                { headers: { Accept: "application/json" } },
+              );
+              if (res.ok) {
+                const data: {
+                  chart?: {
+                    result?: Array<{
+                      meta?: { regularMarketPrice?: number };
+                    }>;
+                  };
+                } = await res.json();
+                const price =
+                  data?.chart?.result?.[0]?.meta?.regularMarketPrice;
+                if (price && price > 0) {
+                  priceMap[asset.ticker.toUpperCase()] = price;
+                }
+              }
+            } catch {
+              // silently skip on error
+            }
+          });
+          await Promise.all(yahooFetches);
+        }
       }
 
       // Update each asset whose price changed

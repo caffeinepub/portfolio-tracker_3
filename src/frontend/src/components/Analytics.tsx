@@ -5,6 +5,7 @@ import {
   Activity,
   AlertTriangle,
   BarChart2,
+  Layers,
   TrendingDown,
   TrendingUp,
 } from "lucide-react";
@@ -25,7 +26,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import type { Portfolio } from "../backend.d";
+import type { Asset, Portfolio } from "../backend.d";
 import { useCurrency } from "../hooks/useCurrency";
 import { useAssets, usePortfolioSummary } from "../hooks/useQueries";
 
@@ -55,6 +56,28 @@ function fmt(v: number, d = 2) {
     minimumFractionDigits: d,
     maximumFractionDigits: d,
   });
+}
+
+/** Return the effective beta for an asset based on its type and stored value. */
+function getAssetBeta(asset: Asset): number {
+  const type = asset.assetType?.toLowerCase() ?? "stock";
+  if (type === "cash") return 0;
+  if (type === "fixed income") return asset.beta ?? 0.05;
+  if (type === "etf") return asset.beta ?? 0.85;
+  if (type === "crypto") return asset.beta ?? 1.3;
+  return asset.beta ?? 1.0; // stock default
+}
+
+/** Prettify raw assetType string for display. */
+function prettifyAssetType(raw: string): string {
+  const map: Record<string, string> = {
+    stock: "Stock",
+    crypto: "Crypto",
+    etf: "ETF",
+    "fixed income": "Fixed Income",
+    cash: "Cash",
+  };
+  return map[raw?.toLowerCase()] ?? raw.charAt(0).toUpperCase() + raw.slice(1);
 }
 
 // Metric card with big mono value
@@ -452,10 +475,10 @@ export default function Analytics({ portfolioId, portfolio }: AnalyticsProps) {
 
     if (totalValue === 0) return null;
 
-    // Weighted beta
+    // Weighted beta — use getAssetBeta for type-aware defaults
     const weightedBeta = breakdowns.reduce((acc, ab) => {
       const w = ab.value / totalValue;
-      return acc + w * (ab.asset.beta ?? 1.0);
+      return acc + w * getAssetBeta(ab.asset);
     }, 0);
 
     // Portfolio volatility (annualized)
@@ -481,13 +504,13 @@ export default function Analytics({ portfolioId, portfolio }: AnalyticsProps) {
         ? (totalReturnPct - riskFreeRate) / (portfolioVolatility * 100)
         : 0;
 
-    // Sortino ratio — downside vol using losing assets
+    // Sortino ratio — downside vol using losing assets, with type-aware beta
     const losingBreakdowns = breakdowns.filter((ab) => ab.gainLoss < 0);
     const downsideVol =
       losingBreakdowns.length > 0
         ? losingBreakdowns.reduce((acc, ab) => {
             const w = ab.value / totalValue;
-            return acc + w * (ab.asset.beta ?? 1.0);
+            return acc + w * getAssetBeta(ab.asset);
           }, 0) * 0.16
         : portfolioVolatility;
     const sortinoRatio =
@@ -495,18 +518,25 @@ export default function Analytics({ portfolioId, portfolio }: AnalyticsProps) {
         ? (totalReturnPct - riskFreeRate) / (downsideVol * 100)
         : 0;
 
-    // Avg P/E ratio
+    // Avg P/E ratio — exclude Cash (no earnings)
     const peAssets = assets.filter(
-      (a) => a.peRatio != null && (a.peRatio ?? 0) > 0,
+      (a) =>
+        a.assetType?.toLowerCase() !== "cash" &&
+        a.peRatio != null &&
+        (a.peRatio ?? 0) > 0,
     );
     const avgPeRatio =
       peAssets.length > 0
         ? peAssets.reduce((s, a) => s + (a.peRatio ?? 0), 0) / peAssets.length
         : null;
 
-    // Avg dividend yield
+    // Avg dividend / coupon yield — include Fixed Income (treat dividendYield as coupon)
+    // but exclude Cash (no yield)
     const divAssets = assets.filter(
-      (a) => a.dividendYield != null && (a.dividendYield ?? 0) > 0,
+      (a) =>
+        a.assetType?.toLowerCase() !== "cash" &&
+        a.dividendYield != null &&
+        (a.dividendYield ?? 0) > 0,
     );
     const avgDividendYield =
       divAssets.length > 0
@@ -514,6 +544,31 @@ export default function Analytics({ portfolioId, portfolio }: AnalyticsProps) {
             divAssets.length) *
           100
         : null;
+
+    // Diversification score
+    const assetTypes = new Set(
+      breakdowns.map((ab) => ab.asset.assetType?.toLowerCase() ?? "stock"),
+    );
+    const hasDefensive =
+      assetTypes.has("fixed income") || assetTypes.has("cash");
+    const hasEquity = assetTypes.has("stock") || assetTypes.has("etf");
+    const hasCrypto = assetTypes.has("crypto");
+    const typeCount = [hasDefensive, hasEquity, hasCrypto].filter(
+      Boolean,
+    ).length;
+    const diversificationScore = Math.min(
+      100,
+      typeCount * 30 + (assetTypes.size > 3 ? 10 : 0) + (hasDefensive ? 10 : 0),
+    );
+
+    // Defensive weight — used for factor exposure descriptions
+    const defensiveValue = breakdowns
+      .filter((ab) => {
+        const t = ab.asset.assetType?.toLowerCase();
+        return t === "fixed income" || t === "cash";
+      })
+      .reduce((s, ab) => s + ab.value, 0);
+    const defensivePct = (defensiveValue / totalValue) * 100;
 
     return {
       weightedBeta,
@@ -526,6 +581,8 @@ export default function Analytics({ portfolioId, portfolio }: AnalyticsProps) {
       avgDividendYield,
       totalReturnPct,
       riskFreeRate,
+      diversificationScore,
+      defensivePct,
     };
   }, [summary, assets]);
 
@@ -535,7 +592,8 @@ export default function Analytics({ portfolioId, portfolio }: AnalyticsProps) {
 
     const byGroup: Record<string, number> = {};
     for (const ab of summary.assets) {
-      const key = ab.asset.sector ?? ab.asset.assetType ?? "Other";
+      const key =
+        ab.asset.sector ?? prettifyAssetType(ab.asset.assetType ?? "Other");
       byGroup[key] = (byGroup[key] ?? 0) + ab.value;
     }
 
@@ -553,16 +611,21 @@ export default function Analytics({ portfolioId, portfolio }: AnalyticsProps) {
       return { sims: [], current: null };
 
     const breakdowns = summary.assets;
-    const n = breakdowns.length;
     const totalValue = summary.totalMarketValue;
 
-    // Current portfolio point
+    // Current portfolio point — includes all assets
     const currentRet = summary.totalGainLossPct;
     const currentBeta = breakdowns.reduce((acc, ab) => {
       const w = ab.value / totalValue;
-      return acc + w * (ab.asset.beta ?? 1.0);
+      return acc + w * getAssetBeta(ab.asset);
     }, 0);
     const currentRisk = currentBeta * 0.16 * 100;
+
+    // Exclude Cash from frontier simulation (Cash has zero volatility, distorts frontier)
+    const frontierAssets = breakdowns.filter(
+      (ab) => ab.asset.assetType?.toLowerCase() !== "cash",
+    );
+    const n = frontierAssets.length;
 
     // Generate 20 random weight combos
     const sims: { risk: number; ret: number; isCurrent: boolean }[] = [];
@@ -574,23 +637,25 @@ export default function Analytics({ portfolioId, portfolio }: AnalyticsProps) {
       return (seed >>> 0) / 0xffffffff;
     }
 
-    for (let i = 0; i < 20; i++) {
-      // Random weights, normalized
-      const rawW = Array.from({ length: n }, () => rand() + 0.01);
-      const total = rawW.reduce((s, v) => s + v, 0);
-      const weights = rawW.map((v) => v / total);
+    if (n > 0) {
+      for (let i = 0; i < 20; i++) {
+        // Random weights, normalized
+        const rawW = Array.from({ length: n }, () => rand() + 0.01);
+        const total = rawW.reduce((s, v) => s + v, 0);
+        const weights = rawW.map((v) => v / total);
 
-      const ret = breakdowns.reduce(
-        (acc, ab, idx) => acc + weights[idx] * ab.gainLossPct,
-        0,
-      );
-      const beta = breakdowns.reduce(
-        (acc, ab, idx) => acc + weights[idx] * (ab.asset.beta ?? 1.0),
-        0,
-      );
-      const risk = beta * 0.16 * 100;
+        const ret = frontierAssets.reduce(
+          (acc, ab, idx) => acc + weights[idx] * ab.gainLossPct,
+          0,
+        );
+        const beta = frontierAssets.reduce(
+          (acc, ab, idx) => acc + weights[idx] * getAssetBeta(ab.asset),
+          0,
+        );
+        const risk = beta * 0.16 * 100;
 
-      sims.push({ risk, ret, isCurrent: false });
+        sims.push({ risk, ret, isCurrent: false });
+      }
     }
 
     const current = { risk: currentRisk, ret: currentRet, isCurrent: true };
@@ -609,21 +674,27 @@ export default function Analytics({ portfolioId, portfolio }: AnalyticsProps) {
     }
     const labels = Array.from(sectorSet);
 
+    // Asset-type classification helpers
+    const isCash = (lbl: string) => lbl.toLowerCase() === "cash";
+    const isFixedIncome = (lbl: string) =>
+      ["fixed income", "bond", "bonds", "treasury", "treasuries"].some((k) =>
+        lbl.toLowerCase().includes(k),
+      );
+    const isCrypto = (lbl: string) =>
+      ["crypto", "cryptocurrency"].includes(lbl.toLowerCase());
+    const isEtf = (lbl: string) => lbl.toLowerCase() === "etf";
+
     // Build correlation between each pair
     const matrix: number[][] = labels.map((labelA) =>
       labels.map((labelB) => {
         if (labelA === labelB) return 1.0;
-
-        const aIsCrypto =
-          labelA.toLowerCase() === "crypto" ||
-          labelA.toLowerCase() === "cryptocurrency";
-        const bIsCrypto =
-          labelB.toLowerCase() === "crypto" ||
-          labelB.toLowerCase() === "cryptocurrency";
-
-        if (aIsCrypto && bIsCrypto) return 0.85;
-        if (aIsCrypto || bIsCrypto) return 0.15;
-        // Both stocks, different sectors
+        if (isCash(labelA) || isCash(labelB)) return 0.0;
+        if (isFixedIncome(labelA) && isFixedIncome(labelB)) return 0.75;
+        if (isFixedIncome(labelA) || isFixedIncome(labelB)) return 0.05; // low correlation to equities
+        if (isCrypto(labelA) && isCrypto(labelB)) return 0.85;
+        if (isCrypto(labelA) || isCrypto(labelB)) return 0.15;
+        if (isEtf(labelA) || isEtf(labelB)) return 0.6; // ETF broadly correlated with equities
+        // Both stock sectors
         return (
           0.3 +
           (Math.abs(labelA.charCodeAt(0) - labelB.charCodeAt(0)) % 3) * 0.1
@@ -712,11 +783,11 @@ export default function Analytics({ portfolioId, portfolio }: AnalyticsProps) {
     if (!summary || summary.totalMarketValue === 0) return [];
     const byType: Record<string, number> = {};
     for (const ab of summary.assets) {
-      const key = ab.asset.assetType ?? "Other";
+      const key = prettifyAssetType(ab.asset.assetType ?? "Other");
       byType[key] = (byType[key] ?? 0) + ab.value;
     }
     return Object.entries(byType).map(([name, value]) => ({
-      name: name.charAt(0).toUpperCase() + name.slice(1),
+      name,
       value,
       pct: (value / summary.totalMarketValue) * 100,
     }));
@@ -727,7 +798,8 @@ export default function Analytics({ portfolioId, portfolio }: AnalyticsProps) {
     if (!summary || summary.totalMarketValue === 0) return [];
     const byGroup: Record<string, number> = {};
     for (const ab of summary.assets) {
-      const key = ab.asset.sector ?? ab.asset.assetType ?? "Other";
+      const key =
+        ab.asset.sector ?? prettifyAssetType(ab.asset.assetType ?? "Other");
       byGroup[key] = (byGroup[key] ?? 0) + ab.value;
     }
     return Object.entries(byGroup)
@@ -800,7 +872,7 @@ export default function Analytics({ portfolioId, portfolio }: AnalyticsProps) {
               <div className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground mb-3">
                 Risk &amp; Performance
               </div>
-              <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+              <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3">
                 <MetricCard
                   label="Sharpe Ratio"
                   value={loading ? "—" : fmt(metrics?.sharpeRatio ?? 0, 2)}
@@ -911,6 +983,24 @@ export default function Analytics({ portfolioId, portfolio }: AnalyticsProps) {
                   loading={loading}
                   icon={BarChart2}
                 />
+                <MetricCard
+                  label="Diversification"
+                  value={
+                    loading ? "—" : `${metrics?.diversificationScore ?? 0}/100`
+                  }
+                  subtext="Asset-type breadth score"
+                  tone={
+                    loading
+                      ? "neutral"
+                      : (metrics?.diversificationScore ?? 0) >= 60
+                        ? "good"
+                        : (metrics?.diversificationScore ?? 0) >= 30
+                          ? "warn"
+                          : "bad"
+                  }
+                  loading={loading}
+                  icon={Layers}
+                />
               </div>
             </section>
 
@@ -987,12 +1077,12 @@ export default function Analytics({ portfolioId, portfolio }: AnalyticsProps) {
                     loading
                       ? "Loading..."
                       : metrics?.avgDividendYield == null
-                        ? "No dividend data. Add yields in Holdings."
+                        ? "No dividend/coupon data. Add yields in Holdings."
                         : (metrics.avgDividendYield ?? 0) > 3
-                          ? "Income-oriented — solid yield relative to bonds."
+                          ? "Income-oriented — solid yield including coupon income from Fixed Income."
                           : (metrics.avgDividendYield ?? 0) > 1
-                            ? "Modest yield — some income component present."
-                            : "Growth-focused — minimal income generation."
+                            ? "Modest yield — some dividend and/or coupon income present."
+                            : "Growth-focused — minimal income generation from dividends or coupons."
                   }
                   loading={loading}
                 />
@@ -1012,11 +1102,19 @@ export default function Analytics({ portfolioId, portfolio }: AnalyticsProps) {
                   description={
                     loading
                       ? "Loading..."
-                      : (metrics?.portfolioVolatility ?? 0) * 100 > 20
-                        ? "High volatility — expect significant price swings."
-                        : (metrics?.portfolioVolatility ?? 0) * 100 > 12
-                          ? "Moderate volatility — typical diversified portfolio range."
-                          : "Low volatility — stable, defensive positioning."
+                      : (() => {
+                          const vol = (metrics?.portfolioVolatility ?? 0) * 100;
+                          const defensive = metrics?.defensivePct ?? 0;
+                          const base =
+                            vol > 20
+                              ? "High volatility — expect significant price swings."
+                              : vol > 12
+                                ? "Moderate volatility — typical diversified portfolio range."
+                                : "Low volatility — stable, defensive positioning.";
+                          return defensive > 20
+                            ? `${base} Portfolio includes defensive assets (Fixed Income/Cash) which dampen overall volatility.`
+                            : base;
+                        })()
                   }
                   loading={loading}
                 />
@@ -1534,7 +1632,7 @@ export default function Analytics({ portfolioId, portfolio }: AnalyticsProps) {
                       Asset Class Split
                     </CardTitle>
                     <p className="text-xs text-muted-foreground">
-                      Portfolio weight by asset class (stock vs crypto)
+                      Portfolio weight by asset class
                     </p>
                   </CardHeader>
                   <CardContent>
@@ -1661,10 +1759,11 @@ export default function Analytics({ portfolioId, portfolio }: AnalyticsProps) {
                     Methodology Notes
                   </div>
                   <p>
-                    <strong>Beta</strong> is weighted by current value. Missing
-                    betas default to 1.0 (market-equivalent). Annualized
-                    volatility uses a 16% market proxy (S&P 500 long-run
-                    average).
+                    <strong>Beta</strong> is weighted by current value.
+                    Type-aware defaults: Cash = 0, Fixed Income = 0.05, ETF =
+                    0.85, Crypto = 1.3, Stock = 1.0. Cash is excluded from
+                    Efficient Frontier simulation. Annualized volatility uses a
+                    16% market proxy (S&amp;P 500 long-run average).
                   </p>
                   <p>
                     <strong>Sharpe &amp; Sortino</strong> use 5.0% risk-free

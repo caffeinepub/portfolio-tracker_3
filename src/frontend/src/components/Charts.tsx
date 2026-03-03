@@ -1,9 +1,11 @@
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   AlertTriangle,
   BarChart2,
+  Info,
   LineChart as LineChartIcon,
 } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -83,6 +85,19 @@ function generateOHLCV(asset: Asset, chartPxHeight: number): OHLCVPoint[] {
   const DAYS = 60;
   const BASE_PRICE = price * 0.85;
 
+  // Per-asset-type volatility multiplier
+  const type = asset.assetType?.toLowerCase() ?? "stock";
+  const volMult =
+    type === "cash"
+      ? 0
+      : type === "fixed income"
+        ? 0.08
+        : type === "crypto"
+          ? 1.5
+          : type === "etf"
+            ? 0.8
+            : 1.0; // stock default
+
   const points: Array<{
     date: string;
     open: number;
@@ -99,11 +114,24 @@ function generateOHLCV(asset: Asset, chartPxHeight: number): OHLCVPoint[] {
     const day = String(d.getDate()).padStart(2, "0");
     const date = `${month} ${day}`;
 
-    const open = prevClose * (1 + (rand() - 0.5) * 0.01);
-    const change = (rand() - 0.48) * 0.04; // slight upward bias
-    const close = open * (1 + change);
-    const high = Math.max(open, close) * (1 + rand() * 0.012);
-    const low = Math.min(open, close) * (1 - rand() * 0.012);
+    let open: number;
+    let close: number;
+    let high: number;
+    let low: number;
+
+    if (volMult === 0) {
+      // Cash: flat line, no movement
+      open = prevClose;
+      close = prevClose;
+      high = prevClose;
+      low = prevClose;
+    } else {
+      open = prevClose * (1 + (rand() - 0.5) * 0.01);
+      const change = (rand() - 0.48) * 0.04 * volMult;
+      close = open * (1 + change);
+      high = Math.max(open, close) * (1 + rand() * 0.012 * volMult);
+      low = Math.min(open, close) * (1 - rand() * 0.012 * volMult);
+    }
 
     points.push({ date, open, high, low, close });
     prevClose = close;
@@ -256,6 +284,18 @@ const CandleTooltip = ({
 
 const CHART_PX_HEIGHT = 200; // usable pixel height for candle math
 
+/** Prettify raw assetType string for display. */
+function prettifyAssetType(raw: string): string {
+  const map: Record<string, string> = {
+    stock: "Stock",
+    crypto: "Crypto",
+    etf: "ETF",
+    "fixed income": "Fixed Income",
+    cash: "Cash",
+  };
+  return map[raw?.toLowerCase()] ?? raw.charAt(0).toUpperCase() + raw.slice(1);
+}
+
 function AssetChartCard({
   asset,
   colorIndex,
@@ -279,18 +319,36 @@ function AssetChartCard({
   }, [data]);
 
   const hasPrice = asset.currentPrice > 0 || asset.avgBuyPrice > 0;
+  const isCash = asset.assetType?.toLowerCase() === "cash";
+  const assetTypeLabel = prettifyAssetType(asset.assetType ?? "Stock");
 
   return (
     <Card className="border-border bg-card">
       <CardHeader className="pb-2">
         <div className="flex items-start justify-between gap-2">
           <div>
-            <CardTitle className="text-sm font-semibold text-foreground">
-              {asset.ticker}
-            </CardTitle>
+            <div className="flex items-center gap-2">
+              <CardTitle className="text-sm font-semibold text-foreground">
+                {asset.ticker}
+              </CardTitle>
+              <Badge
+                variant="outline"
+                className="text-[10px] h-4 px-1.5 font-medium"
+              >
+                {assetTypeLabel}
+              </Badge>
+            </div>
             <p className="text-xs text-muted-foreground mt-0.5 truncate max-w-[180px]">
               {asset.name}
             </p>
+            {isCash && (
+              <div className="flex items-center gap-1 mt-1">
+                <Info className="w-3 h-3 text-muted-foreground shrink-0" />
+                <span className="text-[10px] text-muted-foreground">
+                  Price is stable by nature — flat chart expected.
+                </span>
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-1 shrink-0">
             <Button
