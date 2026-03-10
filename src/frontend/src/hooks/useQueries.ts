@@ -33,6 +33,20 @@ export function useCreatePortfolio() {
   });
 }
 
+export function useRenamePortfolio() {
+  const { actor } = useActor();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, newName }: { id: bigint; newName: string }) => {
+      if (!actor) throw new Error("No actor");
+      return actor.renamePortfolio(id, newName);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["portfolios"] });
+    },
+  });
+}
+
 export function useDeletePortfolio() {
   const { actor } = useActor();
   const queryClient = useQueryClient();
@@ -266,10 +280,8 @@ export function useRefreshPrices() {
       }
 
       // Fetch stock/ETF/fixed-income prices
-      // Strategy: try Finnhub first (if API key set), then fall back to Yahoo Finance (free, no key needed)
       const stockApiKey = localStorage.getItem(STOCK_API_KEY_STORAGE);
 
-      // Assets that need exchange-based price lookup: stock, etf, fixed_income
       const exchangeAssets = assets.filter((a) => {
         const t = a.assetType.toLowerCase();
         return t === "stock" || t === "etf" || t === "fixed_income";
@@ -281,7 +293,6 @@ export function useRefreshPrices() {
         );
 
         if (stockApiKey) {
-          // Use Finnhub when an API key is available
           const finnhubFetches = assetsNeedingPrice.map(async (asset) => {
             try {
               const res = await fetch(
@@ -300,8 +311,6 @@ export function useRefreshPrices() {
           await Promise.all(finnhubFetches);
         }
 
-        // For any assets still missing prices (no Finnhub key or Finnhub failed),
-        // fall back to Yahoo Finance (free, no API key required)
         const stillMissing = assetsNeedingPrice.filter(
           (a) => priceMap[a.ticker.toUpperCase()] === undefined,
         );
@@ -334,7 +343,6 @@ export function useRefreshPrices() {
         }
       }
 
-      // Update each asset whose price changed
       const updates = assets
         .filter((a) => priceMap[a.ticker.toUpperCase()] !== undefined)
         .map((a) =>

@@ -33,6 +33,7 @@ import {
   LayoutDashboard,
   LineChart,
   LogOut,
+  Pencil,
   Plus,
   Scale,
   Settings,
@@ -40,7 +41,7 @@ import {
   Trash2,
   TrendingUp,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ActiveView } from "../App";
 import type { Portfolio } from "../backend.d";
 import { useInternetIdentity } from "../hooks/useInternetIdentity";
@@ -53,8 +54,10 @@ interface SidebarProps {
   onSelectPortfolio: (id: bigint) => void;
   onCreatePortfolio: (name: string) => void;
   onDeletePortfolio: (id: bigint) => void;
+  onRenamePortfolio: (id: bigint, newName: string) => void;
   isCreating: boolean;
   isDeleting: boolean;
+  isRenaming: boolean;
   isLoading: boolean;
 }
 
@@ -85,15 +88,28 @@ export default function Sidebar({
   onSelectPortfolio,
   onCreatePortfolio,
   onDeletePortfolio,
+  onRenamePortfolio,
   isCreating,
   isDeleting,
+  isRenaming,
   isLoading,
 }: SidebarProps) {
   const { clear, identity } = useInternetIdentity();
   const [showCreate, setShowCreate] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
+  const [showRename, setShowRename] = useState(false);
   const [newPortfolioName, setNewPortfolioName] = useState("");
   const [nameError, setNameError] = useState("");
+  const [renameValue, setRenameValue] = useState("");
+  const [renameError, setRenameError] = useState("");
+
+  // Pre-fill rename input when dialog opens
+  useEffect(() => {
+    if (showRename && selectedPortfolio) {
+      setRenameValue(selectedPortfolio.name);
+      setRenameError("");
+    }
+  }, [showRename, selectedPortfolio]);
 
   const handleCreate = () => {
     if (!newPortfolioName.trim()) {
@@ -110,6 +126,17 @@ export default function Sidebar({
     if (selectedPortfolio) {
       onDeletePortfolio(selectedPortfolio.id);
       setShowDelete(false);
+    }
+  };
+
+  const handleRenameSubmit = () => {
+    if (!renameValue.trim()) {
+      setRenameError("Portfolio name is required");
+      return;
+    }
+    if (selectedPortfolio) {
+      onRenamePortfolio(selectedPortfolio.id, renameValue.trim());
+      setShowRename(false);
     }
   };
 
@@ -184,6 +211,17 @@ export default function Sidebar({
             >
               <Plus className="w-3 h-3" />
               New
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs text-muted-foreground hover:text-foreground hover:bg-accent border-border"
+              onClick={() => setShowRename(true)}
+              disabled={!selectedPortfolio || isRenaming}
+              data-ocid="portfolio.rename_button"
+              title="Rename portfolio"
+            >
+              <Pencil className="w-3 h-3" />
             </Button>
             <Button
               size="sm"
@@ -341,6 +379,56 @@ export default function Sidebar({
             </Button>
             <Button onClick={handleCreate} disabled={isCreating}>
               {isCreating ? "Creating..." : "Create"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Rename Portfolio Dialog */}
+      <Dialog open={showRename} onOpenChange={setShowRename}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Rename Portfolio</DialogTitle>
+          </DialogHeader>
+          <div className="py-2">
+            <Label htmlFor="rename-portfolio" className="text-sm mb-1.5 block">
+              Portfolio Name
+            </Label>
+            <Input
+              id="rename-portfolio"
+              placeholder="e.g. Growth Portfolio"
+              value={renameValue}
+              onChange={(e) => {
+                setRenameValue(e.target.value);
+                setRenameError("");
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleRenameSubmit();
+              }}
+              autoFocus
+              data-ocid="portfolio.rename_input"
+            />
+            {renameError && (
+              <p className="text-xs text-destructive mt-1.5">{renameError}</p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowRename(false);
+                setRenameError("");
+              }}
+              data-ocid="portfolio.rename_cancel_button"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleRenameSubmit}
+              disabled={isRenaming}
+              data-ocid="portfolio.rename_submit_button"
+            >
+              {isRenaming ? "Renaming..." : "Rename"}
             </Button>
           </DialogFooter>
         </DialogContent>

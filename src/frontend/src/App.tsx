@@ -19,6 +19,7 @@ import {
   useCreatePortfolio,
   useDeletePortfolio,
   usePortfolios,
+  useRenamePortfolio,
 } from "./hooks/useQueries";
 
 export type ActiveView =
@@ -256,6 +257,7 @@ function AuthenticatedApp({
 
   const createPortfolio = useCreatePortfolio();
   const deletePortfolio = useDeletePortfolio();
+  const renamePortfolio = useRenamePortfolio();
 
   const selectedPortfolio: Portfolio | undefined = portfolios.find(
     (p) => p.id === selectedPortfolioId,
@@ -281,6 +283,18 @@ function AuthenticatedApp({
     }
   };
 
+  const handleRenamePortfolio = async (
+    portfolioId: bigint,
+    newName: string,
+  ) => {
+    try {
+      await renamePortfolio.mutateAsync({ id: portfolioId, newName });
+      toast.success(`Portfolio renamed to "${newName}"`);
+    } catch {
+      toast.error("Failed to rename portfolio");
+    }
+  };
+
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar
@@ -291,8 +305,10 @@ function AuthenticatedApp({
         onSelectPortfolio={setSelectedPortfolioId}
         onCreatePortfolio={handleCreatePortfolio}
         onDeletePortfolio={handleDeletePortfolio}
+        onRenamePortfolio={handleRenamePortfolio}
         isCreating={createPortfolio.isPending}
         isDeleting={deletePortfolio.isPending}
+        isRenaming={renamePortfolio.isPending}
         isLoading={portfoliosQuery.isLoading || actorLoading || !initialized}
       />
 

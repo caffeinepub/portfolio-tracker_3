@@ -88,6 +88,7 @@ export interface _SERVICE {
   'assignCallerUserRole' : ActorMethod<[Principal, UserRole], undefined>,
   'createPortfolio' : ActorMethod<[string], bigint>,
   'deletePortfolio' : ActorMethod<[bigint], undefined>,
+  'renamePortfolio' : ActorMethod<[bigint, string], undefined>,
   'getAssets' : ActorMethod<[bigint], Array<Asset>>,
   'getCallerUserProfile' : ActorMethod<[], [] | [UserProfile]>,
   'getCallerUserRole' : ActorMethod<[], UserRole>,

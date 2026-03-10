@@ -70,6 +70,7 @@ export interface backendInterface {
     assignCallerUserRole(user: Principal, role: UserRole): Promise<void>;
     createPortfolio(name: string): Promise<bigint>;
     deletePortfolio(id: bigint): Promise<void>;
+    renamePortfolio(id: bigint, newName: string): Promise<void>;
     getAssets(portfolioId: bigint): Promise<Array<Asset>>;
     getCallerUserProfile(): Promise<UserProfile | null>;
     getCallerUserRole(): Promise<UserRole>;

@@ -626,6 +626,26 @@ actor {
     portfolioId;
   };
 
+  public shared ({ caller }) func renamePortfolio(id : Nat, newName : Text) : async () {
+    validateNotAnonymous(caller);
+
+    if (not verifyPortfolioOwnershipSync(caller, id)) {
+      Runtime.trap("Portfolio not found");
+    };
+
+    switch (userPortfolios.get(caller)) {
+      case (null) { Runtime.trap("No portfolios found for user") };
+      case (?portfolios) {
+        switch (portfolios.get(id)) {
+          case (null) { Runtime.trap("Portfolio not found") };
+          case (?portfolio) {
+            portfolios.add(id, { id = portfolio.id; name = newName; createdAt = portfolio.createdAt });
+          };
+        };
+      };
+    };
+  };
+
   public shared ({ caller }) func deletePortfolio(id : Nat) : async () {
     validateNotAnonymous(caller);
 
